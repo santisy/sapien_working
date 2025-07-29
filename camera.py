@@ -2,7 +2,8 @@
 Concepts:
     - Create and mount cameras
     - Render RGB images, point clouds, segmentation masks
-    - Normalize URDF to unit cube for consistent multi-view rendering
+    - Auto-position camera based on object bounds
+    - Multi-view rendering with normalized objects
 """
 import argparse
 import os
@@ -16,166 +17,140 @@ def get_actor_bounds(actor):
     min_bound = np.array([np.inf, np.inf, np.inf])
     max_bound = np.array([-np.inf, -np.inf, -np.inf])
     
+    # Method 1: Try to use collision shapes to get bounds
     for link in actor.get_links():
         link_pose = link.get_pose()
         
-        # Try collision shapes first
-        collision_shapes = link.get_collision_shapes()
-        if len(collision_shapes) > 0:
-            for collision_shape in collision_shapes:
+        # Get collision shapes
+        for collision_shape in link.get_collision_shapes():
+            # Get the geometry bounds
+            geometry = collision_shape.geometry
+            
+            # Different geometry types have different ways to get bounds
+            if hasattr(geometry, 'get_bounding_box'):
                 try:
-                    geometry = collision_shape.geometry
-                    
-                    # Handle different geometry types
-                    if hasattr(geometry, 'half_lengths'):  # Box
-                        half = geometry.half_lengths
-                        local_min, local_max = -half, half
-                    elif hasattr(geometry, 'radius'):  # Sphere/Cylinder
-                        r = geometry.radius
-                        if hasattr(geometry, 'half_length'):  # Cylinder
-                            h = geometry.half_length
-                            local_min = np.array([-r, -r, -h])
-                            local_max = np.array([r, r, h])
-                        else:  # Sphere
-                            local_min = np.array([-r, -r, -r])
-                            local_max = np.array([r, r, r])
+                    local_min, local_max = geometry.get_bounding_box()
+                except:
+                    # Fallback: estimate bounds based on geometry type
+                    if hasattr(geometry, 'vertices'):
+                        vertices = geometry.vertices
+                        local_min = vertices.min(axis=0)
+                        local_max = vertices.max(axis=0)
                     else:
-                        # Default bounds
+                        # Use a default small bounds
                         local_min = np.array([-0.1, -0.1, -0.1])
                         local_max = np.array([0.1, 0.1, 0.1])
-                    
-                    # Transform to world coordinates
-                    try:
-                        shape_pose = collision_shape.get_local_pose()
-                        transform = link_pose.to_transformation_matrix() @ shape_pose.to_transformation_matrix()
-                    except:
-                        transform = link_pose.to_transformation_matrix()
-                    
-                    # Transform corners
-                    corners = np.array([
-                        [local_min[0], local_min[1], local_min[2]],
-                        [local_min[0], local_min[1], local_max[2]],
-                        [local_min[0], local_max[1], local_min[2]],
-                        [local_min[0], local_max[1], local_max[2]],
-                        [local_max[0], local_min[1], local_min[2]],
-                        [local_max[0], local_min[1], local_max[2]],
-                        [local_max[0], local_max[1], local_min[2]],
-                        [local_max[0], local_max[1], local_max[2]]
-                    ])
-                    
-                    corners_homogeneous = np.hstack([corners, np.ones((8, 1))])
-                    corners_world = (transform @ corners_homogeneous.T)[:3, :].T
-                    
-                    min_bound = np.minimum(min_bound, corners_world.min(axis=0))
-                    max_bound = np.maximum(max_bound, corners_world.max(axis=0))
-                    
-                except Exception as e:
-                    print(f"Warning: Error processing collision shape: {e}")
-                    continue
-        else:
-            # Fallback: use link position with small bounds
-            pos = link_pose.p
-            link_size = 0.1
-            min_bound = np.minimum(min_bound, pos - link_size)
-            max_bound = np.maximum(max_bound, pos + link_size)
+            else:
+                # Fallback for unknown geometry types
+                local_min = np.array([-0.1, -0.1, -0.1])
+                local_max = np.array([0.1, 0.1, 0.1])
+            
+            # Transform bounds to world coordinates
+            shape_pose = collision_shape.get_local_pose()
+            transform = link_pose.to_transformation_matrix() @ shape_pose.to_transformation_matrix()
+            
+            # Transform the 8 corners of the bounding box
+            corners = np.array([
+                [local_min[0], local_min[1], local_min[2]],
+                [local_min[0], local_min[1], local_max[2]],
+                [local_min[0], local_max[1], local_min[2]],
+                [local_min[0], local_max[1], local_max[2]],
+                [local_max[0], local_min[1], local_min[2]],
+                [local_max[0], local_min[1], local_max[2]],
+                [local_max[0], local_max[1], local_min[2]],
+                [local_max[0], local_max[1], local_max[2]]
+            ])
+            
+            # Transform corners to world coordinates
+            corners_homogeneous = np.hstack([corners, np.ones((8, 1))])
+            corners_world = (transform @ corners_homogeneous.T)[:3, :].T
+            
+            # Update global bounds
+            min_bound = np.minimum(min_bound, corners_world.min(axis=0))
+            max_bound = np.maximum(max_bound, corners_world.max(axis=0))
     
-    # If no valid bounds found, use reasonable defaults
+    # If no valid bounds found, use default
     if np.any(np.isinf(min_bound)) or np.any(np.isinf(max_bound)):
         print("Warning: Could not determine object bounds, using default")
-        min_bound = np.array([-0.5, -0.5, 0])
-        max_bound = np.array([0.5, 0.5, 1])
+        min_bound = np.array([-1, -1, -1])
+        max_bound = np.array([1, 1, 1])
     
     return min_bound, max_bound
 
-def normalize_actor_to_unit_cube(actor, target_size=1.0):
-    """
-    Normalize the URDF actor to fit within a unit cube centered at origin
-    Returns the transformation parameters for consistent multi-view rendering
-    """
-    # Get current bounds
+def normalize_and_center_object(actor):
+    """Center the object and return normalization info for camera positioning"""
+    # Get object bounds
     min_bound, max_bound = get_actor_bounds(actor)
     
-    # Calculate current center and size
-    current_center = (min_bound + max_bound) / 2
-    current_size = max_bound - min_bound
-    max_extent = np.max(current_size)
+    # Calculate object center and size
+    center = (min_bound + max_bound) / 2
+    size = max_bound - min_bound
+    max_extent = np.max(size)
     
-    print(f"Original bounds: min={min_bound}, max={max_bound}")
-    print(f"Original center: {current_center}")
-    print(f"Original size: {current_size}")
+    print(f"Object center: {center}")
+    print(f"Object size: {size}")
     print(f"Max extent: {max_extent}")
     
-    # Calculate scaling factor to fit in unit cube
-    if max_extent > 0:
-        scale_factor = target_size / max_extent
-    else:
-        scale_factor = 1.0
+    # Move object to be centered at origin (0, 0, 0)
+    target_center = np.array([0, 0, 0])  # Center at origin for unit sphere sampling
+    translation = target_center - center
     
-    # Calculate translation to center at origin
-    # Move to origin first, then scale, then move to desired center (0,0,0.5 to sit on ground)
-    target_center = np.array([0, 0, target_size/2])  # Place bottom at z=0
+    # Apply translation to actor
+    current_pose = actor.get_pose()
+    new_pose = sapien.Pose(p=current_pose.p + translation, q=current_pose.q)
+    actor.set_pose(new_pose)
     
-    # Get the root link and apply transformation
-    root_link = actor.get_links()[0]  # Assuming first link is root
-    current_pose = root_link.get_pose()
+    print(f"Translated object by: {translation}")
+    print(f"New center should be at: {target_center}")
     
-    # Create transformation: translate to origin, scale, then translate to target
-    translation_to_origin = -current_center
-    final_translation = target_center
+    # Calculate scale factor to fit in unit cube
+    # We want the largest dimension to be 1.0
+    scale_factor = 1.0 / max_extent if max_extent > 0 else 1.0
     
-    # Apply transformation to the actor
-    # Note: SAPIEN doesn't support direct scaling, so we work with positioning
-    new_position = (current_pose.p + translation_to_origin) * scale_factor + final_translation
-    new_pose = sapien.Pose(p=new_position, q=current_pose.q)
-    
-    # For kinematic actors, we can set the pose directly
-    root_link.set_pose(new_pose)
-    
-    print(f"Applied normalization:")
-    print(f"  Scale factor: {scale_factor}")
-    print(f"  New position: {new_position}")
-    print(f"  Target center: {target_center}")
+    print(f"Scale factor needed for unit cube: {scale_factor}")
+    print(f"After scaling, size would be: {size * scale_factor}")
     
     return {
-        'scale_factor': scale_factor,
-        'original_center': current_center,
-        'target_center': target_center,
-        'original_size': current_size,
-        'max_extent': max_extent
+        'center': target_center,
+        'size': size,
+        'scaled_size': size * scale_factor,  # What the size would be after scaling
+        'max_extent': max_extent,
+        'scale_factor': scale_factor,  # This is what we need to apply via camera distance
+        'translation': translation
     }
 
-def sample_camera_pose_on_sphere(radius=2.0, elevation_range=(15, 75), azimuth=0):
-    """
-    Sample camera pose on a sphere around the origin
-    elevation_range: (min_deg, max_deg) elevation from horizontal plane
-    azimuth: azimuth angle in degrees
-    """
-    # Convert to radians
-    elevation = np.random.uniform(elevation_range[0], elevation_range[1])
-    elevation_rad = np.deg2rad(elevation)
-    azimuth_rad = np.deg2rad(azimuth)
-    
-    # Spherical to Cartesian coordinates
-    x = radius * np.cos(elevation_rad) * np.cos(azimuth_rad)
-    y = radius * np.cos(elevation_rad) * np.sin(azimuth_rad)
-    z = radius * np.sin(elevation_rad)
-    
-    cam_pos = np.array([x, y, z])
-    
-    # Look at origin (where object is centered)
-    target = np.array([0, 0, 0.5])  # Look at center of unit cube
-    
-    return cam_pos, target
-
-def position_camera_on_sphere(camera_mount_actor, radius=2.0, azimuth=45, elevation=30):
+def position_camera_for_object(scene, camera, camera_mount_actor, normalization_info, azimuth=45, elevation=30, distance_factor=2.5):
     """Position camera on sphere around normalized object"""
-    cam_pos, target = sample_camera_pose_on_sphere(radius, (elevation, elevation), azimuth)
+    center = normalization_info['center']
+    scale_factor = normalization_info['scale_factor']
     
-    # Compute camera orientation
-    forward = (target - cam_pos)
+    # IMPORTANT: Use the scale factor to simulate unit cube normalization
+    # Since we can't scale geometry, we scale the camera distance inversely
+    # If object is large (scale_factor small), camera should be far
+    # If object is small (scale_factor large), camera should be close
+    cam_distance = distance_factor / scale_factor
+    
+    print(f"Object scale_factor: {scale_factor:.3f}")
+    print(f"Base distance_factor: {distance_factor}")
+    print(f"Final camera distance: {cam_distance:.3f}")
+    print(f"This simulates the object being scaled to unit cube")
+    
+    # Convert angles to radians
+    azimuth_rad = np.deg2rad(azimuth)
+    elevation_rad = np.deg2rad(elevation)
+    
+    # Calculate camera position on sphere
+    x = cam_distance * np.cos(elevation_rad) * np.cos(azimuth_rad)
+    y = cam_distance * np.cos(elevation_rad) * np.sin(azimuth_rad)
+    z = cam_distance * np.sin(elevation_rad)
+    
+    cam_pos = center + np.array([x, y, z])
+    
+    # Compute camera orientation to look at object center
+    forward = (center - cam_pos)
     forward = forward / np.linalg.norm(forward)
     
-    # Use world up as reference
+    # Use world up as reference for left vector
     world_up = np.array([0, 0, 1])
     left = np.cross(world_up, forward)
     left = left / np.linalg.norm(left)
@@ -189,8 +164,6 @@ def position_camera_on_sphere(camera_mount_actor, radius=2.0, azimuth=45, elevat
     camera_mount_actor.set_pose(sapien.Pose.from_transformation_matrix(mat44))
     
     print(f"Camera positioned at: {cam_pos}")
-    print(f"Looking at: {target}")
-    print(f"Distance: {np.linalg.norm(cam_pos - target):.2f}")
 
 def main(args):
     engine = sapien.Engine()
@@ -211,10 +184,10 @@ def main(args):
     asset = loader.load_kinematic(urdf_file)
     assert asset, "Failed to load URDF."
     
-    # Normalize object to unit cube - THIS IS THE KEY STEP
-    normalization_info = normalize_actor_to_unit_cube(asset, target_size=1.0)
+    # Normalize and center the object
+    normalization_info = normalize_and_center_object(asset)
     
-    # Set up lighting (positioned for normalized object)
+    # Set up lighting
     scene.set_ambient_light([0.5, 0.5, 0.5])
     scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5], shadow=True)
     scene.add_point_light([2, 2, 2], [1, 1, 1])
@@ -240,13 +213,10 @@ def main(args):
     camera_mount_actor = scene.create_actor_builder().build_kinematic()
     camera.set_parent(parent=camera_mount_actor, keep_pose=False)
     
-    # Position camera on sphere around normalized object
-    position_camera_on_sphere(
-        camera_mount_actor, 
-        radius=2.5,  # Distance from center
-        azimuth=args.camera_azimuth,  # Horizontal angle
-        elevation=args.camera_elevation  # Vertical angle
-    )
+    # Position camera based on normalized object
+    position_camera_for_object(scene, camera, camera_mount_actor, normalization_info,
+                             azimuth=getattr(args, 'azimuth', 45),
+                             elevation=getattr(args, 'elevation', 30))
     
     # Update scene
     scene.step()
@@ -262,8 +232,10 @@ def main(args):
     rgba_img = (rgba * 255).clip(0, 255).astype("uint8")
     rgba_pil = Image.fromarray(rgba_img)
     
-    # Save with descriptive filename
-    output_name = f'color_obj{args.object_id}_az{args.camera_azimuth}_el{args.camera_elevation}.png'
+    # Create output filename
+    azimuth = getattr(args, 'azimuth', 45)
+    elevation = getattr(args, 'elevation', 30)
+    output_name = f'color_obj{args.object_id}_az{azimuth}_el{elevation}.png'
     rgba_pil.save(output_name)
     print(f"Saved {output_name}")
     
@@ -276,26 +248,28 @@ def main(args):
     # Convert to millimeters and save as 16-bit PNG
     depth_image = (depth * 1000.0).astype(np.uint16)
     depth_pil = Image.fromarray(depth_image)
-    depth_name = f'depth_obj{args.object_id}_az{args.camera_azimuth}_el{args.camera_elevation}.png'
+    depth_name = f'depth_obj{args.object_id}_az{azimuth}_el{elevation}.png'
     depth_pil.save(depth_name)
     print(f"Saved {depth_name}")
     
-    # Optional: Save normalized depth for visualization
-    valid_depth = depth[depth > 0]
-    if len(valid_depth) > 0:
-        depth_normalized = np.zeros_like(depth)
-        depth_normalized[depth > 0] = ((depth[depth > 0] - valid_depth.min()) / 
-                                      (valid_depth.max() - valid_depth.min()) * 255)
-        depth_vis_pil = Image.fromarray(depth_normalized.astype(np.uint8))
-        vis_name = f'depth_vis_obj{args.object_id}_az{args.camera_azimuth}_el{args.camera_elevation}.png'
-        depth_vis_pil.save(vis_name)
-        print(f"Saved {vis_name}")
+    # Optional: Save normalized depth for visualization (YOUR ORIGINAL CODE!)
+    depth_normalized = ((depth - depth.min()) / (depth.max() - depth.min()) * 255).astype(np.uint8)
+    depth_vis_pil = Image.fromarray(depth_normalized)
+    vis_name = f'depth_normalized_obj{args.object_id}_az{azimuth}_el{elevation}.png'
+    depth_vis_pil.save(vis_name)
+    print(f"Saved {vis_name}")
     
-    # Print normalization info for debugging
-    print("\nNormalization Summary:")
-    print(f"  Original max extent: {normalization_info['max_extent']:.3f}")
-    print(f"  Scale factor applied: {normalization_info['scale_factor']:.3f}")
-    print(f"  Object now centered at: {normalization_info['target_center']}")
+    # ---------------------------------------------------------------------------- #
+    # Point Cloud (Optional)
+    # ---------------------------------------------------------------------------- #
+    # Extract point cloud in world coordinates
+    points_opengl = position[..., :3][position[..., 3] < 1]
+    
+    # Transform to world coordinates
+    model_matrix = camera.get_model_matrix()
+    points_world = points_opengl @ model_matrix[:3, :3].T + model_matrix[:3, 3]
+    
+    print(f"Generated point cloud with {len(points_world)} points")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -303,9 +277,9 @@ if __name__ == '__main__':
     parser.add_argument("--image_shape",
                         type=lambda x: [int(y) for y in x.split(",")],
                         default=[512, 512])
-    parser.add_argument("--camera_azimuth", type=float, default=45, 
+    parser.add_argument("--azimuth", type=float, default=45,
                         help="Camera azimuth angle in degrees")
-    parser.add_argument("--camera_elevation", type=float, default=30,
+    parser.add_argument("--elevation", type=float, default=30,
                         help="Camera elevation angle in degrees")
     args = parser.parse_args()
     main(args)
