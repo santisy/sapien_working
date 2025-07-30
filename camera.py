@@ -71,7 +71,6 @@ def get_actor_bounds(actor):
     
     # If no valid bounds found, use default
     if np.any(np.isinf(min_bound)) or np.any(np.isinf(max_bound)):
-        print("Warning: Could not determine object bounds, using default")
         min_bound = np.array([-1, -1, -1])
         max_bound = np.array([1, 1, 1])
     
@@ -87,9 +86,8 @@ def normalize_and_center_object(actor):
     size = max_bound - min_bound
     max_extent = np.max(size)
     
-    print(f"Object center: {center}")
-    print(f"Object size: {size}")
-    print(f"Max extent: {max_extent}")
+    # Calculate diagonal length
+    diagonal_length = np.linalg.norm(size)
     
     # Move object to be centered at origin (0, 0, 0)
     target_center = np.array([0, 0, 0])  # Center at origin for unit sphere sampling
@@ -100,21 +98,16 @@ def normalize_and_center_object(actor):
     new_pose = sapien.Pose(p=current_pose.p + translation, q=current_pose.q)
     actor.set_pose(new_pose)
     
-    print(f"Translated object by: {translation}")
-    print(f"New center should be at: {target_center}")
-    
     # Calculate scale factor to fit in unit cube
     # We want the largest dimension to be 1.0
     scale_factor = 1.0 / max_extent if max_extent > 0 else 1.0
-    
-    print(f"Scale factor needed for unit cube: {scale_factor}")
-    print(f"After scaling, size would be: {size * scale_factor}")
     
     return {
         'center': target_center,
         'size': size,
         'scaled_size': size * scale_factor,  # What the size would be after scaling
         'max_extent': max_extent,
+        'diagonal_length': diagonal_length,
         'scale_factor': scale_factor,  # This is what we need to apply via camera distance
         'translation': translation
     }
@@ -122,18 +115,10 @@ def normalize_and_center_object(actor):
 def position_camera_for_object(scene, camera, camera_mount_actor, normalization_info, azimuth=45, elevation=30, distance_factor=2.5):
     """Position camera on sphere around normalized object"""
     center = normalization_info['center']
-    scale_factor = normalization_info['scale_factor']
+    diagonal_length = normalization_info['diagonal_length']
     
-    # IMPORTANT: Use the scale factor to simulate unit cube normalization
-    # Since we can't scale geometry, we scale the camera distance inversely
-    # If object is large (scale_factor small), camera should be far
-    # If object is small (scale_factor large), camera should be close
-    cam_distance = distance_factor / scale_factor
-    
-    print(f"Object scale_factor: {scale_factor:.3f}")
-    print(f"Base distance_factor: {distance_factor}")
-    print(f"Final camera distance: {cam_distance:.3f}")
-    print(f"This simulates the object being scaled to unit cube")
+    # Use diagonal length for consistent camera distance
+    cam_distance = diagonal_length * distance_factor
     
     # Convert angles to radians
     azimuth_rad = np.deg2rad(azimuth)
@@ -141,7 +126,7 @@ def position_camera_for_object(scene, camera, camera_mount_actor, normalization_
     
     # Calculate camera position on sphere
     x = cam_distance * np.cos(elevation_rad) * np.cos(azimuth_rad)
-    y = cam_distance * np.cos(elevation_rad) * np.sin(azimuth_rad)
+    y = cam_distance * np.cos(elevation_rad) * np.sin(azimuth_rad) 
     z = cam_distance * np.sin(elevation_rad)
     
     cam_pos = center + np.array([x, y, z])
@@ -150,22 +135,27 @@ def position_camera_for_object(scene, camera, camera_mount_actor, normalization_
     forward = (center - cam_pos)
     forward = forward / np.linalg.norm(forward)
     
-    # Use world up as reference for left vector
+    # Use world up as reference
     world_up = np.array([0, 0, 1])
-    left = np.cross(world_up, forward)
-    left = left / np.linalg.norm(left)
-    up = np.cross(forward, left)
     
-    # Create transformation matrix
+    # Right-handed coordinate system
+    right = np.cross(forward, world_up)
+    if np.linalg.norm(right) < 1e-6:  # Handle edge case when forward is parallel to world_up
+        right = np.array([1, 0, 0])
+    right = right / np.linalg.norm(right)
+    up = np.cross(right, forward)
+    
+    # SAPIEN expects [forward, left, up]
+    left = -right
     mat44 = np.eye(4)
     mat44[:3, :3] = np.stack([forward, left, up], axis=1)
     mat44[:3, 3] = cam_pos
     
     camera_mount_actor.set_pose(sapien.Pose.from_transformation_matrix(mat44))
-    
-    print(f"Camera positioned at: {cam_pos}")
 
 def main(args):
+    os.makedirs(args.output_dir, exist_ok=True)
+
     engine = sapien.Engine()
     renderer = sapien.SapienRenderer()
     engine.set_renderer(renderer)
@@ -215,29 +205,24 @@ def main(args):
     
     # Position camera based on normalized object
     position_camera_for_object(scene, camera, camera_mount_actor, normalization_info,
-                             azimuth=getattr(args, 'azimuth', 45),
-                             elevation=getattr(args, 'elevation', 30))
+                             azimuth=args.azimuth,
+                             elevation=args.elevation)
     
     # Update scene
     scene.step()
     scene.update_render()
     camera.take_picture()
     
-    print('Intrinsic matrix\n', camera.get_intrinsic_matrix())
+    ## ---------------------------------------------------------------------------- #
+    ## Render RGBA
+    ## ---------------------------------------------------------------------------- #
+    #rgba = camera.get_float_texture('Color')  # [H, W, 4]
+    #rgba_img = (rgba * 255).clip(0, 255).astype("uint8")
+    #rgba_pil = Image.fromarray(rgba_img)
     
-    # ---------------------------------------------------------------------------- #
-    # Render RGBA
-    # ---------------------------------------------------------------------------- #
-    rgba = camera.get_float_texture('Color')  # [H, W, 4]
-    rgba_img = (rgba * 255).clip(0, 255).astype("uint8")
-    rgba_pil = Image.fromarray(rgba_img)
-    
-    # Create output filename
-    azimuth = getattr(args, 'azimuth', 45)
-    elevation = getattr(args, 'elevation', 30)
-    output_name = f'color_obj{args.object_id}_az{azimuth}_el{elevation}.png'
-    rgba_pil.save(output_name)
-    print(f"Saved {output_name}")
+    ## Create output filename
+    #output_name = f'color_obj{args.object_id}_az{args.azimuth}_el{args.elevation}.png'
+    #rgba_pil.save(output_name)
     
     # ---------------------------------------------------------------------------- #
     # Render Depth
@@ -245,34 +230,21 @@ def main(args):
     position = camera.get_float_texture('Position')  # [H, W, 4]
     depth = -position[..., 2]  # OpenGL convention: -z is forward
     
-    # Convert to millimeters and save as 16-bit PNG
-    depth_image = (depth * 1000.0).astype(np.uint16)
-    depth_pil = Image.fromarray(depth_image)
-    depth_name = f'depth_obj{args.object_id}_az{azimuth}_el{elevation}.png'
-    depth_pil.save(depth_name)
-    print(f"Saved {depth_name}")
+    ## Convert to millimeters and save as 16-bit PNG
+    #depth_image = (depth * 1000.0).astype(np.uint16)
+    #depth_pil = Image.fromarray(depth_image)
+    #depth_name = f'depth_obj{args.object_id}_az{args.azimuth}_el{args.elevation}.png'
+    #depth_pil.save(depth_name)
     
-    # Optional: Save normalized depth for visualization (YOUR ORIGINAL CODE!)
+    # Optional: Save normalized depth for visualization
     depth_normalized = ((depth - depth.min()) / (depth.max() - depth.min()) * 255).astype(np.uint8)
     depth_vis_pil = Image.fromarray(depth_normalized)
-    vis_name = f'depth_normalized_obj{args.object_id}_az{azimuth}_el{elevation}.png'
-    depth_vis_pil.save(vis_name)
-    print(f"Saved {vis_name}")
+    vis_name = f'depth_normalized_obj{args.object_id}_az{args.azimuth}_el{args.elevation}.png'
+    depth_vis_pil.save(os.path.join(args.output_dir, vis_name))
     
-    # ---------------------------------------------------------------------------- #
-    # Point Cloud (Optional)
-    # ---------------------------------------------------------------------------- #
-    # Extract point cloud in world coordinates
-    points_opengl = position[..., :3][position[..., 3] < 1]
-    
-    # Transform to world coordinates
-    model_matrix = camera.get_model_matrix()
-    points_world = points_opengl @ model_matrix[:3, :3].T + model_matrix[:3, 3]
-    
-    print(f"Generated point cloud with {len(points_world)} points")
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--object_id", type=int, default=179)
     parser.add_argument("--image_shape",
                         type=lambda x: [int(y) for y in x.split(",")],
