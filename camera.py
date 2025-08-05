@@ -1,96 +1,50 @@
-"""Camera.
-Concepts:
-    - Create and mount cameras
-    - Render RGB images, point clouds, segmentation masks
-    - Auto-position camera based on object bounds
-    - Multi-view rendering with normalized objects
-"""
+"""Camera normalization using bounding_box.json from URDF folder"""
 import argparse
 import os
+import json
 import sapien as sp
 import sapien.core as sapien
 import numpy as np
 from PIL import Image
+import tempfile
+import shutil
+import subprocess
 
-def get_actor_bounds(actor):
-    """Get the axis-aligned bounding box of an actor using collision shapes"""
-    min_bound = np.array([np.inf, np.inf, np.inf])
-    max_bound = np.array([-np.inf, -np.inf, -np.inf])
+def load_bounding_box(urdf_path):
+    """Load bounding box from bounding_box.json in the URDF directory"""
+    urdf_dir = os.path.dirname(urdf_path)
+    bbox_file = os.path.join(urdf_dir, 'bounding_box.json')
     
-    # Method 1: Try to use collision shapes to get bounds
-    for link in actor.get_links():
-        link_pose = link.get_pose()
-        
-        # Get collision shapes
-        for collision_shape in link.get_collision_shapes():
-            # Get the geometry bounds
-            geometry = collision_shape.geometry
-            
-            # Different geometry types have different ways to get bounds
-            if hasattr(geometry, 'get_bounding_box'):
-                try:
-                    local_min, local_max = geometry.get_bounding_box()
-                except:
-                    # Fallback: estimate bounds based on geometry type
-                    if hasattr(geometry, 'vertices'):
-                        vertices = geometry.vertices
-                        local_min = vertices.min(axis=0)
-                        local_max = vertices.max(axis=0)
-                    else:
-                        # Use a default small bounds
-                        local_min = np.array([-0.1, -0.1, -0.1])
-                        local_max = np.array([0.1, 0.1, 0.1])
-            else:
-                # Fallback for unknown geometry types
-                local_min = np.array([-0.1, -0.1, -0.1])
-                local_max = np.array([0.1, 0.1, 0.1])
-            
-            # Transform bounds to world coordinates
-            shape_pose = collision_shape.get_local_pose()
-            transform = link_pose.to_transformation_matrix() @ shape_pose.to_transformation_matrix()
-            
-            # Transform the 8 corners of the bounding box
-            corners = np.array([
-                [local_min[0], local_min[1], local_min[2]],
-                [local_min[0], local_min[1], local_max[2]],
-                [local_min[0], local_max[1], local_min[2]],
-                [local_min[0], local_max[1], local_max[2]],
-                [local_max[0], local_min[1], local_min[2]],
-                [local_max[0], local_min[1], local_max[2]],
-                [local_max[0], local_max[1], local_min[2]],
-                [local_max[0], local_max[1], local_max[2]]
-            ])
-            
-            # Transform corners to world coordinates
-            corners_homogeneous = np.hstack([corners, np.ones((8, 1))])
-            corners_world = (transform @ corners_homogeneous.T)[:3, :].T
-            
-            # Update global bounds
-            min_bound = np.minimum(min_bound, corners_world.min(axis=0))
-            max_bound = np.maximum(max_bound, corners_world.max(axis=0))
+    if not os.path.exists(bbox_file):
+        print(f"Warning: bounding_box.json not found at {bbox_file}")
+        return None
     
-    # If no valid bounds found, use default
-    if np.any(np.isinf(min_bound)) or np.any(np.isinf(max_bound)):
-        min_bound = np.array([-1, -1, -1])
-        max_bound = np.array([1, 1, 1])
+    with open(bbox_file, 'r') as f:
+        bbox_data = json.load(f)
+    
+    # Extract min and max bounds
+    min_bound = np.array(bbox_data['min'])
+    max_bound = np.array(bbox_data['max'])
+    
+    print(f"Loaded bounding box: min={min_bound}, max={max_bound}")
     
     return min_bound, max_bound
 
-def normalize_and_center_object(actor):
-    """Center the object and return normalization info for camera positioning"""
-    # Get object bounds
-    min_bound, max_bound = get_actor_bounds(actor)
-    
+def normalize_and_center_object(actor, min_bound, max_bound):
+    """Center the object at origin and return normalization info"""
     # Calculate object center and size
     center = (min_bound + max_bound) / 2
     size = max_bound - min_bound
     max_extent = np.max(size)
-    
-    # Calculate diagonal length
     diagonal_length = np.linalg.norm(size)
     
-    # Move object to be centered at origin (0, 0, 0)
-    target_center = np.array([0, 0, 0])  # Center at origin for unit sphere sampling
+    print(f"Object center: {center}")
+    print(f"Object size: {size}")
+    print(f"Max extent: {max_extent}")
+    print(f"Diagonal length: {diagonal_length}")
+    
+    # Move object to be centered at origin
+    target_center = np.array([0, 0, 0])
     translation = target_center - center
     
     # Apply translation to actor
@@ -98,27 +52,27 @@ def normalize_and_center_object(actor):
     new_pose = sapien.Pose(p=current_pose.p + translation, q=current_pose.q)
     actor.set_pose(new_pose)
     
-    # Calculate scale factor to fit in unit cube
-    # We want the largest dimension to be 1.0
-    scale_factor = 1.0 / max_extent if max_extent > 0 else 1.0
+    print(f"Translated object by: {translation}")
     
     return {
-        'center': target_center,
+        'center': target_center,  # Now at origin
+        'original_center': center,
         'size': size,
-        'scaled_size': size * scale_factor,  # What the size would be after scaling
         'max_extent': max_extent,
         'diagonal_length': diagonal_length,
-        'scale_factor': scale_factor,  # This is what we need to apply via camera distance
         'translation': translation
     }
 
-def position_camera_for_object(scene, camera, camera_mount_actor, normalization_info, azimuth=45, elevation=30, distance_factor=2.5):
+def position_camera_for_object(scene, camera, camera_mount_actor, normalization_info, 
+                               azimuth=45, elevation=30, distance_factor=2.5):
     """Position camera on sphere around normalized object"""
-    center = normalization_info['center']
+    center = normalization_info['center']  # Should be [0, 0, 0]
     diagonal_length = normalization_info['diagonal_length']
     
-    # Use diagonal length for consistent camera distance
+    # Camera distance based on diagonal length
     cam_distance = diagonal_length * distance_factor
+    
+    print(f"Camera distance: {cam_distance}")
     
     # Convert angles to radians
     azimuth_rad = np.deg2rad(azimuth)
@@ -126,10 +80,12 @@ def position_camera_for_object(scene, camera, camera_mount_actor, normalization_
     
     # Calculate camera position on sphere
     x = cam_distance * np.cos(elevation_rad) * np.cos(azimuth_rad)
-    y = cam_distance * np.cos(elevation_rad) * np.sin(azimuth_rad) 
+    y = cam_distance * np.cos(elevation_rad) * np.sin(azimuth_rad)
     z = cam_distance * np.sin(elevation_rad)
     
     cam_pos = center + np.array([x, y, z])
+    
+    print(f"Camera position: {cam_pos}")
     
     # Compute camera orientation to look at object center
     forward = (center - cam_pos)
@@ -140,7 +96,7 @@ def position_camera_for_object(scene, camera, camera_mount_actor, normalization_
     
     # Right-handed coordinate system
     right = np.cross(forward, world_up)
-    if np.linalg.norm(right) < 1e-6:  # Handle edge case when forward is parallel to world_up
+    if np.linalg.norm(right) < 1e-6:
         right = np.array([1, 0, 0])
     right = right / np.linalg.norm(right)
     up = np.cross(right, forward)
@@ -171,11 +127,54 @@ def main(args):
     assert token is not None, "Please set TOKEN_SAPIEN_STR environment variable"
     
     urdf_file = sp.asset.download_partnet_mobility(args.object_id, token)
+    
+    # Load bounding box from JSON
+    bbox_result = load_bounding_box(urdf_file)
+    if bbox_result is None:
+        print("Error: Could not load bounding_box.json")
+        return
+    
+    min_bound, max_bound = bbox_result
+    
+    # Load the URDF
     asset = loader.load_kinematic(urdf_file)
     assert asset, "Failed to load URDF."
     
     # Normalize and center the object
-    normalization_info = normalize_and_center_object(asset)
+    normalization_info = normalize_and_center_object(asset, min_bound, max_bound)
+    
+    # Get joints information
+    all_joints = asset.get_joints()
+    
+    print("\nAll joints info:")
+    for i, joint in enumerate(all_joints):
+        print(f"Joint {i}: {joint.name}")
+        print(f"  Type: {joint.type}")
+        if joint.type != "fixed":
+            print(f"  Limits: {joint.get_limits()}")
+    
+    movable_joints = [j for j in all_joints if j.type != "fixed"]
+    
+    print(f"\nFound {len(movable_joints)} movable joints")
+    
+    if len(movable_joints) == 0:
+        print("No movable joints found in this object.")
+        return
+    
+    if args.joint_index >= len(movable_joints):
+        print(f"Error: joint_index {args.joint_index} out of range. Found {len(movable_joints)} movable joints:")
+        for i, j in enumerate(movable_joints):
+            print(f"  {i}: {j.name} (type: {j.type})")
+        return
+    
+    target_joint = movable_joints[args.joint_index]
+    limits = target_joint.get_limits()[0]
+    
+    if np.isinf(limits[0]) or np.isinf(limits[1]):
+        print(f"\nJoint {target_joint.name} has infinite limits, using range [0, 1] for animation")
+        limits = [0.0, 1.0]
+    
+    print(f"\nAnimating joint: {target_joint.name} (type: {target_joint.type}), limits: {limits}")
     
     # Set up lighting
     scene.set_ambient_light([0.5, 0.5, 0.5])
@@ -184,9 +183,7 @@ def main(args):
     scene.add_point_light([2, -2, 2], [1, 1, 1])
     scene.add_point_light([-2, 0, 2], [1, 1, 1])
     
-    # ---------------------------------------------------------------------------- #
     # Camera Setup
-    # ---------------------------------------------------------------------------- #
     near, far = 0.1, 100
     width, height = args.image_shape[0], args.image_shape[1]
     
@@ -205,43 +202,87 @@ def main(args):
     
     # Position camera based on normalized object
     position_camera_for_object(scene, camera, camera_mount_actor, normalization_info,
-                             azimuth=args.azimuth,
-                             elevation=args.elevation)
+                               azimuth=args.azimuth,
+                               elevation=args.elevation,
+                               distance_factor=args.distance_factor)
     
-    # Update scene
+    # Get initial depth range for consistent normalization
     scene.step()
     scene.update_render()
     camera.take_picture()
+    position = camera.get_float_texture('Position')
+    initial_depth = -position[..., 2]
+    depth_min, depth_max = initial_depth.min(), initial_depth.max() * 1.5
     
-    ## ---------------------------------------------------------------------------- #
-    ## Render RGBA
-    ## ---------------------------------------------------------------------------- #
-    #rgba = camera.get_float_texture('Color')  # [H, W, 4]
-    #rgba_img = (rgba * 255).clip(0, 255).astype("uint8")
-    #rgba_pil = Image.fromarray(rgba_img)
+    print(f"\nDepth range: [{depth_min:.3f}, {depth_max:.3f}]")
     
-    ## Create output filename
-    #output_name = f'color_obj{args.object_id}_az{args.azimuth}_el{args.elevation}.png'
-    #rgba_pil.save(output_name)
+    temp_dir = tempfile.mkdtemp()
+    print(f"Saving frames to temporary directory: {temp_dir}")
     
-    # ---------------------------------------------------------------------------- #
-    # Render Depth
-    # ---------------------------------------------------------------------------- #
-    position = camera.get_float_texture('Position')  # [H, W, 4]
-    depth = -position[..., 2]  # OpenGL convention: -z is forward
+    for frame in range(args.num_frames):
+        # Interpolate joint position
+        t = frame / (args.num_frames - 1)
+        qpos = limits[0] + t * (limits[1] - limits[0])
+        
+        # Set joint position
+        articulation = target_joint.articulation
+        current_qpos = articulation.get_qpos()
+        
+        # Debug for first frame only
+        if frame == 0:
+            print(f"\nDEBUG: Setting joint at movable_joints[{args.joint_index}] = {target_joint.name}")
+            print(f"DEBUG: qpos array length = {len(current_qpos)}")
+            print(f"DEBUG: qpos before = {current_qpos}")
+        
+        # The key fix: qpos only contains movable joints, so the index is direct
+        current_qpos[args.joint_index] = qpos
+        articulation.set_qpos(current_qpos)
+        
+        if frame == 0:
+            print(f"DEBUG: qpos after = {articulation.get_qpos()}")
+        
+        # Update scene
+        scene.step()
+        scene.update_render()
+        camera.take_picture()
+        
+        # Render Depth
+        position = camera.get_float_texture('Position')
+        depth = -position[..., 2]
+        
+        # Normalize depth using global range
+        depth_normalized = ((depth - depth_min) / (depth_max - depth_min) * 255).clip(0, 255).astype(np.uint8)
+        depth_vis_pil = Image.fromarray(depth_normalized)
+        vis_name = f'depth_frame_{frame:04d}.png'
+        depth_vis_pil.save(os.path.join(temp_dir, vis_name))
     
-    ## Convert to millimeters and save as 16-bit PNG
-    #depth_image = (depth * 1000.0).astype(np.uint16)
-    #depth_pil = Image.fromarray(depth_image)
-    #depth_name = f'depth_obj{args.object_id}_az{args.azimuth}_el{args.elevation}.png'
-    #depth_pil.save(depth_name)
+    # Generate video using ffmpeg
+    output_video = os.path.join(args.output_dir, f'depth_obj{args.object_id}_joint{args.joint_index}_az{args.azimuth}_el{args.elevation}.mp4')
+    ffmpeg_cmd = [
+        'ffmpeg',
+        '-y',
+        '-framerate', '30',
+        '-i', os.path.join(temp_dir, 'depth_frame_%04d.png'),
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-crf', '23',
+        output_video
+    ]
     
-    # Optional: Save normalized depth for visualization
-    depth_normalized = ((depth - depth.min()) / (depth.max() - depth.min()) * 255).astype(np.uint8)
-    depth_vis_pil = Image.fromarray(depth_normalized)
-    vis_name = f'depth_normalized_obj{args.object_id}_az{args.azimuth}_el{args.elevation}.png'
-    depth_vis_pil.save(os.path.join(args.output_dir, vis_name))
-    
+    try:
+        subprocess.run(ffmpeg_cmd, check=True, capture_output=True)
+        print(f"Video saved to: {output_video}")
+        
+        # Clean up temporary directory
+        shutil.rmtree(temp_dir)
+        print("Temporary frames deleted")
+    except subprocess.CalledProcessError as e:
+        print(f"Error generating video with ffmpeg: {e}")
+        print(f"Frames are still available in: {temp_dir}")
+    except FileNotFoundError:
+        print("ffmpeg not found. Please install ffmpeg to generate video.")
+        print(f"Frames saved in: {temp_dir}")
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default="results")
@@ -253,5 +294,11 @@ if __name__ == '__main__':
                         help="Camera azimuth angle in degrees")
     parser.add_argument("--elevation", type=float, default=30,
                         help="Camera elevation angle in degrees")
+    parser.add_argument("--joint_index", type=int, default=0,
+                        help="Which movable joint to animate (0-indexed)")
+    parser.add_argument("--num_frames", type=int, default=30,
+                        help="Number of frames to generate")
+    parser.add_argument("--distance_factor", type=float, default=2.5,
+                        help="Camera distance multiplier relative to object diagonal")
     args = parser.parse_args()
     main(args)
