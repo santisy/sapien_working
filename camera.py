@@ -229,17 +229,18 @@ def main(args):
         current_qpos = articulation.get_qpos()
         
         # Debug for first frame only
-        if frame == 0:
+        if False:#frame == 0:
             print(f"\nDEBUG: Setting joint at movable_joints[{args.joint_index}] = {target_joint.name}")
             print(f"DEBUG: qpos array length = {len(current_qpos)}")
             print(f"DEBUG: qpos before = {current_qpos}")
         
         # The key fix: qpos only contains movable joints, so the index is direct
-        current_qpos[args.joint_index] = qpos
+        for i in range(len(current_qpos)):
+            if i == args.joint_index:
+                current_qpos[i] = qpos
+            else:
+                current_qpos[i] = 0
         articulation.set_qpos(current_qpos)
-        
-        if frame == 0:
-            print(f"DEBUG: qpos after = {articulation.get_qpos()}")
         
         # Update scene
         scene.step()
@@ -257,7 +258,7 @@ def main(args):
         depth_vis_pil.save(os.path.join(temp_dir, vis_name))
     
     # Generate video using ffmpeg
-    output_video = os.path.join(args.output_dir, f'depth_obj{args.object_id}_joint{args.joint_index}_az{args.azimuth}_el{args.elevation}.mp4')
+    output_video = os.path.join(args.output_dir, f'depth_obj{args.object_id}_joint{args.joint_index}_az{args.azimuth}_el{args.elevation}_df{args.distance_factor}.mp4')
     ffmpeg_cmd = [
         'ffmpeg',
         '-y',
