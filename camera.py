@@ -207,14 +207,49 @@ def main(args):
                                distance_factor=args.distance_factor)
     
     # Get initial depth range for consistent normalization
+    # Sample both first and last frame to get better depth range
     scene.step()
     scene.update_render()
     camera.take_picture()
     position = camera.get_float_texture('Position')
-    initial_depth = -position[..., 2]
-    depth_min, depth_max = initial_depth.min(), initial_depth.max() * 1.5
+    first_frame_depth = -position[..., 2]
     
-    print(f"\nDepth range: [{depth_min:.3f}, {depth_max:.3f}]")
+    # Sample last frame
+    articulation = target_joint.articulation
+    current_qpos = articulation.get_qpos()
+    # Set to last frame position
+    for i in range(len(current_qpos)):
+        if i == args.joint_index:
+            current_qpos[i] = limits[1]  # Max position
+        else:
+            current_qpos[i] = 0
+    articulation.set_qpos(current_qpos)
+    scene.step()
+    scene.update_render()
+    camera.take_picture()
+    position = camera.get_float_texture('Position')
+    last_frame_depth = -position[..., 2]
+    
+    # Reset to initial position for animation
+    current_qpos = articulation.get_qpos()
+    for i in range(len(current_qpos)):
+        if i == args.joint_index:
+            current_qpos[i] = limits[0]  # Min position
+        else:
+            current_qpos[i] = 0
+    articulation.set_qpos(current_qpos)
+    
+    # Combine depth ranges from both frames
+    combined_depth_min = min(first_frame_depth.min(), last_frame_depth.min())
+    combined_depth_max = max(first_frame_depth.max(), last_frame_depth.max())
+    
+    # Add margin for safety
+    depth_range = combined_depth_max - combined_depth_min
+    margin = depth_range * 0.1  # 10% margin
+    depth_min = combined_depth_min - margin
+    depth_max = combined_depth_max + margin
+    
+    print(f"\nDepth range: [{depth_min:.3f}, {depth_max:.3f}] (from first+last frame sampling)")
     
     temp_dir = tempfile.mkdtemp()
     print(f"Saving frames to temporary directory: {temp_dir}")
@@ -241,6 +276,9 @@ def main(args):
             else:
                 current_qpos[i] = 0
         articulation.set_qpos(current_qpos)
+        
+        #if frame == 0 or frame == 15:
+        #print(f"DEBUG: qpos = {articulation.get_qpos()}")
         
         # Update scene
         scene.step()
