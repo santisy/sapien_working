@@ -207,7 +207,6 @@ def main(args):
                                distance_factor=args.distance_factor)
     
     # Get initial depth range for consistent normalization
-    # Sample both first and last frame to get better depth range
     scene.step()
     scene.update_render()
     camera.take_picture()
@@ -251,8 +250,12 @@ def main(args):
     
     print(f"\nDepth range: [{depth_min:.3f}, {depth_max:.3f}] (from first+last frame sampling)")
     
-    temp_dir = tempfile.mkdtemp()
-    print(f"Saving frames to temporary directory: {temp_dir}")
+    # Create temporary directories for both video types
+    temp_depth_dir = tempfile.mkdtemp(prefix='depth_')
+    temp_color_dir = tempfile.mkdtemp(prefix='color_')
+    
+    print(f"Saving depth frames to: {temp_depth_dir}")
+    print(f"Saving color frames to: {temp_color_dir}")
     
     for frame in range(args.num_frames):
         # Interpolate joint position
@@ -263,13 +266,7 @@ def main(args):
         articulation = target_joint.articulation
         current_qpos = articulation.get_qpos()
         
-        # Debug for first frame only
-        if False:#frame == 0:
-            print(f"\nDEBUG: Setting joint at movable_joints[{args.joint_index}] = {target_joint.name}")
-            print(f"DEBUG: qpos array length = {len(current_qpos)}")
-            print(f"DEBUG: qpos before = {current_qpos}")
-        
-        # The key fix: qpos only contains movable joints, so the index is direct
+        # Set joint position
         for i in range(len(current_qpos)):
             if i == args.joint_index:
                 current_qpos[i] = qpos
@@ -277,50 +274,71 @@ def main(args):
                 current_qpos[i] = 0
         articulation.set_qpos(current_qpos)
         
-        #if frame == 0 or frame == 15:
-        #print(f"DEBUG: qpos = {articulation.get_qpos()}")
-        
         # Update scene
         scene.step()
         scene.update_render()
         camera.take_picture()
         
-        # Render Depth
+        # Generate depth video frames
         position = camera.get_float_texture('Position')
         depth = -position[..., 2]
-        
-        # Normalize depth using global range
         depth_normalized = ((depth - depth_min) / (depth_max - depth_min) * 255).clip(0, 255).astype(np.uint8)
         depth_vis_pil = Image.fromarray(depth_normalized)
-        vis_name = f'depth_frame_{frame:04d}.png'
-        depth_vis_pil.save(os.path.join(temp_dir, vis_name))
+        depth_frame_name = f'depth_frame_{frame:04d}.png'
+        depth_vis_pil.save(os.path.join(temp_depth_dir, depth_frame_name))
+        
+        # Generate color video frames (if requested)
+        if args.generate_both:
+            rgba = camera.get_float_texture("Color")  # [H, W, 4]
+            rgba_img = (rgba * 255).clip(0, 255).astype("uint8")
+            rgba_pil = Image.fromarray(rgba_img)
+            color_frame_name = f'color_frame_{frame:04d}.png'
+            rgba_pil.save(os.path.join(temp_color_dir, color_frame_name))
     
-    # Generate video using ffmpeg
-    output_video = os.path.join(args.output_dir, f'depth_obj{args.object_id}_joint{args.joint_index}_az{args.azimuth}_el{args.elevation}_df{args.distance_factor}.mp4')
-    ffmpeg_cmd = [
-        'ffmpeg',
-        '-y',
-        '-framerate', '30',
-        '-i', os.path.join(temp_dir, 'depth_frame_%04d.png'),
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p',
-        '-crf', '23',
-        output_video
+    # Generate videos using ffmpeg
+    base_filename = f'obj{args.object_id}_joint{args.joint_index}_az{args.azimuth}_el{args.elevation}_df{args.distance_factor}'
+    
+    # Generate depth video
+    depth_video = os.path.join(args.output_dir, f'depth_{base_filename}.mp4')
+    depth_ffmpeg_cmd = [
+        'ffmpeg', '-y', '-framerate', '30',
+        '-i', os.path.join(temp_depth_dir, 'depth_frame_%04d.png'),
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23',
+        depth_video
     ]
     
     try:
-        subprocess.run(ffmpeg_cmd, check=True, capture_output=True)
-        print(f"Video saved to: {output_video}")
-        
-        # Clean up temporary directory
-        shutil.rmtree(temp_dir)
-        print("Temporary frames deleted")
+        subprocess.run(depth_ffmpeg_cmd, check=True, capture_output=True)
+        print(f"Depth video saved to: {depth_video}")
     except subprocess.CalledProcessError as e:
-        print(f"Error generating video with ffmpeg: {e}")
-        print(f"Frames are still available in: {temp_dir}")
+        print(f"Error generating depth video: {e}")
     except FileNotFoundError:
-        print("ffmpeg not found. Please install ffmpeg to generate video.")
-        print(f"Frames saved in: {temp_dir}")
+        print("ffmpeg not found. Please install ffmpeg.")
+    
+    # Generate color video (if requested)
+    if args.generate_both:
+        color_video = os.path.join(args.output_dir, f'color_{base_filename}.mp4')
+        color_ffmpeg_cmd = [
+            'ffmpeg', '-y', '-framerate', '30',
+            '-i', os.path.join(temp_color_dir, 'color_frame_%04d.png'),
+            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23',
+            color_video
+        ]
+        
+        try:
+            subprocess.run(color_ffmpeg_cmd, check=True, capture_output=True)
+            print(f"Color video saved to: {color_video}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error generating color video: {e}")
+        except FileNotFoundError:
+            print("ffmpeg not found. Please install ffmpeg.")
+    
+    # Clean up temporary directories
+    shutil.rmtree(temp_depth_dir)
+    if args.generate_both:
+        shutil.rmtree(temp_color_dir)
+    
+    print("Temporary frames deleted")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -339,5 +357,7 @@ if __name__ == '__main__':
                         help="Number of frames to generate")
     parser.add_argument("--distance_factor", type=float, default=2.5,
                         help="Camera distance multiplier relative to object diagonal")
+    parser.add_argument("--generate_both", action='store_true',
+                        help="Generate both depth and color videos")
     args = parser.parse_args()
     main(args)

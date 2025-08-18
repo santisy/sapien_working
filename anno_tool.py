@@ -1,6 +1,6 @@
 """
-Annotation Server for Articulated Objects
-Run with: python annotation_server.py
+Updated Annotation Server for Articulated Objects
+Run with: python anno_tool.py
 """
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
@@ -11,6 +11,7 @@ import tempfile
 import shutil
 import subprocess
 from pathlib import Path
+import glob
 
 # Import SAPIEN related libraries
 try:
@@ -33,14 +34,23 @@ current_renderer = None
 RESULTS_DIR = "results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# HTML content (you can save the HTML above as annotation_tool.html)
-HTML_CONTENT = """[INSERT THE HTML CONTENT FROM ABOVE HERE]"""
+def load_html():
+    """Load HTML content from anno.html file"""
+    try:
+        with open('anno.html', 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        return """
+        <html><body>
+        <h1>Error: anno.html file not found</h1>
+        <p>Please ensure anno.html is in the same directory as this server file.</p>
+        </body></html>
+        """
 
 @app.route('/')
 def index():
     """Serve the main HTML page"""
-    # In production, save the HTML as a separate file
-    return HTML_CONTENT
+    return load_html()
 
 @app.route('/load_object', methods=['POST'])
 def load_object():
@@ -59,6 +69,8 @@ def load_object():
         token = os.getenv("TOKEN_SAPIEN_STR", None)
         if not token:
             return jsonify({'error': 'Please set TOKEN_SAPIEN_STR environment variable'}), 500
+        
+        print(f"Loading object {object_id}...")
         
         # Download URDF
         urdf_file = sp.asset.download_partnet_mobility(object_id, token)
@@ -119,7 +131,7 @@ def load_object():
 
 @app.route('/generate_video', methods=['POST'])
 def generate_video():
-    """Generate depth video for specified joint"""
+    """Generate both depth and color videos for specified joint"""
     if not SAPIEN_AVAILABLE:
         return jsonify({'error': 'SAPIEN not installed'}), 500
     
@@ -131,7 +143,7 @@ def generate_video():
     distance_factor = data.get('distance_factor', 3)
     
     try:
-        # Run the camera.py script with parameters
+        # Run the updated camera.py script with parameters
         cmd = [
             'python', 'camera.py',
             '--object_id', str(object_id),
@@ -140,7 +152,8 @@ def generate_video():
             '--elevation', str(elevation),
             '--distance_factor', str(distance_factor),
             '--num_frames', '30',
-            '--output_dir', RESULTS_DIR
+            '--output_dir', RESULTS_DIR,
+            '--generate_both'  # Generate both depth and color videos
         ]
         
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -148,18 +161,26 @@ def generate_video():
         if result.returncode != 0:
             return jsonify({'error': f'Video generation failed: {result.stderr}'}), 500
         
-        # Find the generated video file
-        video_filename = f'depth_obj{object_id}_joint{joint_index}_az{azimuth}_el{elevation}_df{distance_factor}.mp4'
-        video_path = os.path.join(RESULTS_DIR, video_filename)
+        # Find the generated video files
+        base_filename = f'obj{object_id}_joint{joint_index}_az{azimuth}_el{elevation}_df{distance_factor}'
+        depth_filename = f'depth_{base_filename}.mp4'
+        color_filename = f'color_{base_filename}.mp4'
         
-        if not os.path.exists(video_path):
-            return jsonify({'error': 'Video file not found'}), 500
+        depth_path = os.path.join(RESULTS_DIR, depth_filename)
+        color_path = os.path.join(RESULTS_DIR, color_filename)
         
-        # Return relative path for serving
-        return jsonify({
-            'video_path': f'/video/{video_filename}',
-            'full_path': video_path
-        })
+        response_data = {}
+        
+        if os.path.exists(depth_path):
+            response_data['depth_video_path'] = f'/video/{depth_filename}'
+        
+        if os.path.exists(color_path):
+            response_data['color_video_path'] = f'/video/{color_filename}'
+        
+        if not response_data:
+            return jsonify({'error': 'No video files were generated'}), 500
+        
+        return jsonify(response_data)
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -168,6 +189,29 @@ def generate_video():
 def serve_video(filename):
     """Serve video files"""
     return send_from_directory(RESULTS_DIR, filename)
+
+@app.route('/clear_test_videos', methods=['POST'])
+def clear_test_videos():
+    """Clear all test videos from results directory"""
+    try:
+        # Find all video files in results directory
+        video_files = glob.glob(os.path.join(RESULTS_DIR, '*.mp4'))
+        
+        deleted_count = 0
+        for video_file in video_files:
+            try:
+                os.remove(video_file)
+                deleted_count += 1
+            except Exception as e:
+                print(f"Error deleting {video_file}: {e}")
+        
+        return jsonify({
+            'message': f'Cleared {deleted_count} test videos',
+            'deleted_count': deleted_count
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/export_annotations', methods=['POST'])
 def export_annotations():
@@ -220,12 +264,19 @@ if __name__ == '__main__':
     print("1. Set TOKEN_SAPIEN_STR environment variable")
     print("2. Installed sapien: pip install sapien")
     print("3. The camera.py script in the same directory")
+    print("4. The anno.html file in the same directory")
     print("\nServer starting at http://localhost:5000")
     print("=" * 60)
     
     # Check for required files
+    missing_files = []
     if not os.path.exists('camera.py'):
-        print("\nWARNING: camera.py not found in current directory!")
-        print("Please ensure camera.py is in the same folder as this server.")
+        missing_files.append('camera.py')
+    if not os.path.exists('anno.html'):
+        missing_files.append('anno.html')
     
-    app.run(debug=True, port=5000)
+    if missing_files:
+        print(f"\nWARNING: Missing files: {', '.join(missing_files)}")
+        print("Please ensure all required files are in the same folder as this server.")
+    
+    app.run(debug=True, host='0.0.0.0', port=5000)
