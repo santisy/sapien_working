@@ -182,10 +182,9 @@
             border-left-color: #28a745;
         }
         
-        /* Updated browser container styles */
         #browserContainer {
             margin-top: 20px;
-            height: 600px; /* Increased height */
+            height: 600px;
             border: 2px solid #e0e0e0;
             border-radius: 8px;
             overflow: hidden;
@@ -196,7 +195,7 @@
             width: 100%;
             height: 100%;
             border: none;
-            min-width: 1200px; /* Ensure minimum width for proper display */
+            min-width: 1200px;
         }
         
         .browser-controls {
@@ -250,7 +249,6 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.2);
         }
         
-        /* Loading spinner and progress styles */
         .loading-container {
             display: none;
             text-align: center;
@@ -369,7 +367,6 @@
             border: 1px solid #ffeaa7;
         }
 
-        /* Video status indicators */
         .video-status {
             padding: 8px 12px;
             border-radius: 4px;
@@ -396,20 +393,34 @@
 </head>
 <body>
     <div class="container">
-        <h1>🤖 Articulated Object Annotation Tool</h1>
-        
         <div class="main-grid">
             <!-- Left Panel - Object Browser -->
             <div class="panel">
-                <h2>🔍 Browse Objects</h2>
+                <h2>🤖 Browse Objects</h2>
                 
-                <div class="form-group">
-                    <label for="objectId">Object UID:</label>
-                    <input type="number" id="objectId" placeholder="e.g., 179">
-                    <span class="info-text">Find UID from the browser below</span>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                    <div>
+                        <div class="form-group">
+                            <label for="objectId">Object UID:</label>
+                            <input type="number" id="objectId" placeholder="e.g., 179">
+                            <span class="info-text">Find UID from browser below</span>
+                        </div>
+                        
+                        <button onclick="loadObjectInfo()" id="loadBtn">📋 Load Object Info</button>
+                    </div>
+                    
+                    <div>
+                        <div id="objectInfo" style="background: #e7f3ff; padding: 12px; border-radius: 6px; font-size: 12px; display: none;">
+                            <strong style="color: #0066cc;">Object UID:</strong> <span id="currentObjectId">-</span><br>
+                            <strong style="color: #0066cc;">Total Joints:</strong> <span id="totalJoints">-</span><br>
+                            <strong style="color: #0066cc;">Movable Joints:</strong> <span id="movableJoints">-</span>
+                        </div>
+                        
+                        <div id="annotationExistsWarning" style="background: #fff3cd; color: #856404; padding: 10px; border-radius: 6px; margin-top: 10px; border: 1px solid #ffeaa7; font-size: 12px; display: none;">
+                            ⚠️ This UID already has annotations!
+                        </div>
+                    </div>
                 </div>
-                
-                <button onclick="loadObjectInfo()" id="loadBtn">📋 Load Object Info</button>
                 
                 <div class="browser-note">
                     💡 Tip: Click objects in the browser below to see their UID. The browser may take a moment to load.
@@ -444,7 +455,7 @@
                 
                 <div class="form-group">
                     <label>Camera Parameters:</label>
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                         <div>
                             <label for="azimuth" style="font-size: 12px;">Azimuth (°):</label>
                             <input type="number" id="azimuth" value="180" step="10">
@@ -453,16 +464,15 @@
                             <label for="elevation" style="font-size: 12px;">Elevation (°):</label>
                             <input type="number" id="elevation" value="20" step="5">
                         </div>
-                        <div>
-                            <label for="distanceFactor" style="font-size: 12px;">Distance Factor:</label>
-                            <input type="number" id="distanceFactor" value="3" step="0.5">
-                        </div>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="distanceFactor" style="font-size: 12px;">Distance Factor:</label>
+                        <input type="number" id="distanceFactor" value="3" step="0.5">
                     </div>
                 </div>
                 
                 <button onclick="generateVideo()" id="generateBtn" style="width: 100%;">🎬 Generate Test Video</button>
                 
-                <!-- Loading indicator -->
                 <div id="loadingContainer" class="loading-container">
                     <div class="loading-spinner"></div>
                     <div class="progress-bar">
@@ -473,15 +483,15 @@
                 
                 <div id="videoContainer" style="display:none;">
                     <h3 style="margin-bottom: 15px; text-align: center;">Generated Test Videos</h3>
-                    <div class="video-grid">
+                    <div style="display: flex; flex-direction: column; gap: 20px;">
                         <div class="video-item">
                             <h4>Depth Video</h4>
-                            <video id="depthVideo" controls autoplay loop style="display:none; width: 100%; max-width: 300px;"></video>
+                            <video id="depthVideo" controls autoplay loop style="display:none; width: 100%;"></video>
                             <div id="depthStatus" class="video-status">No depth video generated</div>
                         </div>
                         <div class="video-item">
                             <h4>Color Video</h4>
-                            <video id="colorVideo" controls autoplay loop style="display:none; width: 100%; max-width: 300px;"></video>
+                            <video id="colorVideo" controls autoplay loop style="display:none; width: 100%;"></video>
                             <div id="colorStatus" class="video-status">No color video generated</div>
                         </div>
                     </div>
@@ -541,7 +551,11 @@
                     <thead>
                         <tr>
                             <th>UID</th>
-                            <th>Joints</th>
+                            <th>Joint Indices</th>
+                            <th>Joint Prompts</th>
+                            <th>Elevation Range</th>
+                            <th>Azimuth Range</th>
+                            <th>Distance Factor</th>
                             <th>Base Prompt</th>
                             <th>Actions</th>
                         </tr>
@@ -552,7 +566,7 @@
             </div>
             
             <div class="button-group">
-                <button class="export-btn" onclick="exportAnnotations()">📥 Export as JSON</button>
+                <button class="export-btn" onclick="exportAnnotations()">📥 Export as CSV</button>
                 <button onclick="clearTestVideos()" style="background: #dc3545;">🗑️ Clear Test Videos</button>
             </div>
         </div>
@@ -565,7 +579,6 @@
         let currentObjectInfo = null;
         let hasGeneratedVideo = false;
         
-        // Load saved annotations on page load
         window.onload = function() {
             loadAnnotations();
         };
@@ -607,6 +620,7 @@
                 }
                 
                 currentObjectInfo = data;
+                displayObjectInfo(data);
                 displayJointInfo(data.joints);
                 populateJointSelect(data.movable_joints);
                 document.getElementById('videoGenWarning').style.display = 'none';
@@ -667,7 +681,6 @@
                 return;
             }
             
-            // Show loading indicator with proper progress tracking
             const generateBtn = document.getElementById('generateBtn');
             const loadingContainer = document.getElementById('loadingContainer');
             const videoContainer = document.getElementById('videoContainer');
@@ -679,12 +692,10 @@
             loadingContainer.classList.add('show');
             videoContainer.style.display = 'none';
             
-            // Reset progress
             progressFill.style.width = '0%';
             progressFill.classList.add('animated');
             progressText.textContent = 'Starting video generation...';
             
-            // Reset video status
             document.getElementById('depthStatus').className = 'video-status loading';
             document.getElementById('depthStatus').textContent = 'Preparing...';
             document.getElementById('colorStatus').className = 'video-status loading';
@@ -692,11 +703,10 @@
             
             showStatus('Generating videos... This may take up to 30 seconds', 'info');
             
-            // Simulate progress updates
             let progress = 0;
             const progressInterval = setInterval(() => {
                 progress += Math.random() * 15;
-                if (progress > 90) progress = 90; // Don't go to 100% until actually done
+                if (progress > 90) progress = 90;
                 progressFill.style.width = progress + '%';
                 
                 if (progress < 30) {
@@ -721,13 +731,11 @@
                     })
                 });
                 
-                // Clear progress interval
                 clearInterval(progressInterval);
                 
                 const data = await response.json();
                 
                 if (data.error) {
-                    // Hide loading and show error
                     progressFill.classList.remove('animated');
                     progressFill.style.width = '100%';
                     progressFill.style.background = '#dc3545';
@@ -741,12 +749,10 @@
                     return;
                 }
                 
-                // Complete progress
                 progressFill.classList.remove('animated');
                 progressFill.style.width = '100%';
                 progressText.textContent = 'Videos generated successfully! Loading...';
                 
-                // Wait a moment then hide loading and show videos
                 setTimeout(() => {
                     loadingContainer.classList.remove('show');
                     videoContainer.style.display = 'block';
@@ -758,7 +764,6 @@
                     
                     console.log('Video response data:', data);
                     
-                    // Handle depth video
                     if (data.depth_video_path) {
                         console.log('Setting depth video src:', data.depth_video_path);
                         const depthSrc = data.depth_video_path + '?t=' + Date.now();
@@ -768,7 +773,6 @@
                         depthStatus.className = 'video-status success';
                         depthStatus.textContent = 'Depth video loaded successfully';
                         
-                        // Handle video load events
                         depthVideo.onloadeddata = function() {
                             console.log('Depth video loaded successfully');
                         };
@@ -784,7 +788,6 @@
                         depthStatus.textContent = 'No depth video generated';
                     }
                     
-                    // Handle color video
                     if (data.color_video_path) {
                         console.log('Setting color video src:', data.color_video_path);
                         const colorSrc = data.color_video_path + '?t=' + Date.now();
@@ -794,7 +797,6 @@
                         colorStatus.className = 'video-status success';
                         colorStatus.textContent = 'Color video loaded successfully';
                         
-                        // Handle video load events
                         colorVideo.onloadeddata = function() {
                             console.log('Color video loaded successfully');
                         };
@@ -820,7 +822,6 @@
                 loadingContainer.classList.remove('show');
                 showStatus('Error generating video: ' + error, 'error');
                 
-                // Update status indicators
                 document.getElementById('depthStatus').className = 'video-status error';
                 document.getElementById('depthStatus').textContent = 'Generation failed';
                 document.getElementById('colorStatus').className = 'video-status error';
@@ -843,12 +844,10 @@
                     showStatus(data.error, 'error');
                 } else {
                     showStatus(data.message, 'success');
-                    // Hide video container and reset
                     document.getElementById('videoContainer').style.display = 'none';
                     document.getElementById('loadingContainer').classList.remove('show');
                     hasGeneratedVideo = false;
                     
-                    // Reset video elements
                     document.getElementById('depthVideo').src = '';
                     document.getElementById('colorVideo').src = '';
                     document.getElementById('depthStatus').className = 'video-status';
@@ -933,13 +932,43 @@
                 const row = tbody.insertRow();
                 row.innerHTML = `
                     <td>${ann.uid}</td>
-                    <td>${ann.joint_indices.join(', ')}</td>
-                    <td>${ann.base_prompt.substring(0, 30)}...</td>
+                    <td>[${ann.joint_indices.join(', ')}]</td>
+                    <td>["${ann.joint_prompts.join('", "')}"]</td>
+                    <td>[${ann.elevation_range.join(', ')}]</td>
+                    <td>[${ann.azimuth_range.join(', ')}]</td>
+                    <td>${ann.distance_factor}</td>
+                    <td>${ann.base_prompt}</td>
                     <td>
                         <button class="delete-btn" onclick="deleteAnnotation(${idx})">Delete</button>
                     </td>
                 `;
             });
+            
+            // Re-check if current object has existing annotation
+            if (currentObjectInfo) {
+                checkExistingAnnotation(currentObjectInfo.object_id);
+            }
+        }
+        
+        function checkExistingAnnotation(uid) {
+            const existingAnnotation = annotations.find(ann => ann.uid === uid);
+            const warningDiv = document.getElementById('annotationExistsWarning');
+            
+            if (existingAnnotation) {
+                warningDiv.style.display = 'block';
+            } else {
+                warningDiv.style.display = 'none';
+            }
+        }
+        
+        function displayObjectInfo(data) {
+            document.getElementById('currentObjectId').textContent = data.object_id;
+            document.getElementById('totalJoints').textContent = data.joints.length;
+            document.getElementById('movableJoints').textContent = data.movable_joints.length;
+            document.getElementById('objectInfo').style.display = 'block';
+            
+            // Check if annotation already exists for this UID
+            checkExistingAnnotation(data.object_id);
         }
         
         function deleteAnnotation(index) {
@@ -957,17 +986,47 @@
                 return;
             }
             
-            const dataStr = JSON.stringify(annotations, null, 2);
-            const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+            // Convert to CSV format
+            const headers = [
+                'uid',
+                'joint_indices',
+                'joint_prompts',
+                'elevation_range',
+                'azimuth_range',
+                'distance_factor',
+                'base_prompt'
+            ];
             
-            const exportFileDefaultName = `annotations_${new Date().toISOString().split('T')[0]}.json`;
+            let csvContent = headers.join(',') + '\n';
             
-            const linkElement = document.createElement('a');
-            linkElement.setAttribute('href', dataUri);
-            linkElement.setAttribute('download', exportFileDefaultName);
-            linkElement.click();
+            annotations.forEach(ann => {
+                const row = [
+                    ann.uid,
+                    `"[${ann.joint_indices.join(', ')}]"`,
+                    `"[""${ann.joint_prompts.join('"", ""')}""]"`,
+                    `"[${ann.elevation_range.join(', ')}]"`,
+                    `"[${ann.azimuth_range.join(', ')}]"`,
+                    ann.distance_factor,
+                    `"${ann.base_prompt.replace(/"/g, '""')}"`
+                ];
+                csvContent += row.join(',') + '\n';
+            });
             
-            showStatus('Annotations exported!', 'success');
+            // Create download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            
+            const exportFileName = `articulated_annotations_${annotations.length}_items_${new Date().toISOString().split('T')[0]}.csv`;
+            
+            link.setAttribute('href', url);
+            link.setAttribute('download', exportFileName);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            showStatus(`Exported ${annotations.length} annotations to CSV!`, 'success');
         }
         
         function showStatus(message, type) {
