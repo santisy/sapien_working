@@ -161,8 +161,9 @@ def generate_video():
         if result.returncode != 0:
             return jsonify({'error': f'Video generation failed: {result.stderr}'}), 500
         
-        # Find the generated video files
-        base_filename = f'obj{object_id}_joint{joint_index}_az{azimuth}_el{elevation}_df{distance_factor}'
+        # Find the generated video files - match the actual format from camera.py
+        # camera.py uses float formatting which adds .0 to integers
+        base_filename = f'obj{object_id}_joint{joint_index}_az{float(azimuth)}_el{float(elevation)}_df{float(distance_factor)}'
         depth_filename = f'depth_{base_filename}.mp4'
         color_filename = f'color_{base_filename}.mp4'
         
@@ -171,24 +172,55 @@ def generate_video():
         
         response_data = {}
         
-        if os.path.exists(depth_path):
-            response_data['depth_video_path'] = f'/video/{depth_filename}'
+        # Check if files exist and are readable
+        if os.path.exists(depth_path) and os.access(depth_path, os.R_OK):
+            response_data['depth_video_path'] = f'/results/{depth_filename}'
+            print(f"Depth video available at: {depth_path}")
+        else:
+            print(f"Depth video not found or not readable: {depth_path}")
         
-        if os.path.exists(color_path):
-            response_data['color_video_path'] = f'/video/{color_filename}'
+        if os.path.exists(color_path) and os.access(color_path, os.R_OK):
+            response_data['color_video_path'] = f'/results/{color_filename}'
+            print(f"Color video available at: {color_path}")
+        else:
+            print(f"Color video not found or not readable: {color_path}")
         
         if not response_data:
-            return jsonify({'error': 'No video files were generated'}), 500
+            return jsonify({'error': 'No video files were generated or accessible'}), 500
         
+        print(f"Returning video paths: {response_data}")
         return jsonify(response_data)
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/video/<filename>')
+@app.route('/results/<filename>')
 def serve_video(filename):
-    """Serve video files"""
-    return send_from_directory(RESULTS_DIR, filename)
+    """Serve video files from results directory"""
+    try:
+        file_path = os.path.join(RESULTS_DIR, filename)
+        print(f"Attempting to serve: {file_path}")
+        
+        if not os.path.exists(file_path):
+            print(f"File not found: {file_path}")
+            return "File not found", 404
+        
+        if not os.access(file_path, os.R_OK):
+            print(f"File not readable: {file_path}")
+            return "File not accessible", 403
+            
+        print(f"Serving file: {file_path}")
+        return send_from_directory(RESULTS_DIR, filename)
+        
+    except Exception as e:
+        print(f"Error serving file {filename}: {e}")
+        return f"Error serving file: {e}", 500
+
+# Also add the old route for backward compatibility
+@app.route('/video/<filename>')
+def serve_video_old(filename):
+    """Serve video files (old route for compatibility)"""
+    return serve_video(filename)
 
 @app.route('/clear_test_videos', methods=['POST'])
 def clear_test_videos():
@@ -202,6 +234,7 @@ def clear_test_videos():
             try:
                 os.remove(video_file)
                 deleted_count += 1
+                print(f"Deleted: {video_file}")
             except Exception as e:
                 print(f"Error deleting {video_file}: {e}")
         
@@ -265,7 +298,8 @@ if __name__ == '__main__':
     print("2. Installed sapien: pip install sapien")
     print("3. The camera.py script in the same directory")
     print("4. The anno.html file in the same directory")
-    print("\nServer starting at http://localhost:5000")
+    print(f"\nResults directory: {os.path.abspath(RESULTS_DIR)}")
+    print("Server starting at http://localhost:5000")
     print("=" * 60)
     
     # Check for required files
@@ -278,5 +312,12 @@ if __name__ == '__main__':
     if missing_files:
         print(f"\nWARNING: Missing files: {', '.join(missing_files)}")
         print("Please ensure all required files are in the same folder as this server.")
+    
+    # Set proper permissions for results directory
+    try:
+        os.chmod(RESULTS_DIR, 0o755)
+        print(f"Set permissions for {RESULTS_DIR}")
+    except Exception as e:
+        print(f"Warning: Could not set permissions for {RESULTS_DIR}: {e}")
     
     app.run(debug=True, host='0.0.0.0', port=5000)

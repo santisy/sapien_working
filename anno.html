@@ -19,7 +19,7 @@
         }
         
         .container {
-            max-width: 1600px;
+            max-width: 1800px;
             margin: 0 auto;
         }
         
@@ -182,18 +182,45 @@
             border-left-color: #28a745;
         }
         
+        /* Updated browser container styles */
         #browserContainer {
             margin-top: 20px;
-            height: 400px;
+            height: 600px; /* Increased height */
             border: 2px solid #e0e0e0;
             border-radius: 8px;
             overflow: hidden;
+            position: relative;
         }
         
         #browserContainer iframe {
             width: 100%;
             height: 100%;
             border: none;
+            min-width: 1200px; /* Ensure minimum width for proper display */
+        }
+        
+        .browser-controls {
+            background: #f8f9fa;
+            padding: 10px;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .browser-controls button {
+            padding: 5px 10px;
+            font-size: 12px;
+            min-width: auto;
+        }
+        
+        .browser-note {
+            background: #e7f3ff;
+            color: #0066cc;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 10px;
         }
         
         #videoContainer {
@@ -221,6 +248,67 @@
             max-width: 100%;
             border-radius: 8px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        
+        /* Loading spinner and progress styles */
+        .loading-container {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        
+        .loading-container.show {
+            display: block;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(102, 126, 234, 0.3);
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s ease-in-out infinite;
+            margin-bottom: 15px;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        
+        .progress-fill.animated {
+            animation: progress-pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        @keyframes progress-pulse {
+            0% { width: 20%; }
+            50% { width: 80%; }
+            100% { width: 20%; }
+        }
+        
+        .progress-text {
+            color: #666;
+            font-size: 14px;
+            font-weight: 500;
         }
         
         #annotationsTable {
@@ -272,20 +360,6 @@
             font-style: italic;
         }
         
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(255,255,255,.3);
-            border-radius: 50%;
-            border-top-color: white;
-            animation: spin 1s ease-in-out infinite;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
         .warning {
             background: #fff3cd;
             color: #856404;
@@ -293,6 +367,30 @@
             border-radius: 6px;
             margin: 10px 0;
             border: 1px solid #ffeaa7;
+        }
+
+        /* Video status indicators */
+        .video-status {
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-top: 5px;
+            font-weight: 500;
+        }
+        
+        .video-status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .video-status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .video-status.loading {
+            background: #e7f3ff;
+            color: #0066cc;
         }
     </style>
 </head>
@@ -308,13 +406,22 @@
                 <div class="form-group">
                     <label for="objectId">Object UID:</label>
                     <input type="number" id="objectId" placeholder="e.g., 179">
-                    <span class="info-text">Enter UID from the browser below</span>
+                    <span class="info-text">Find UID from the browser below</span>
                 </div>
                 
                 <button onclick="loadObjectInfo()" id="loadBtn">📋 Load Object Info</button>
                 
+                <div class="browser-note">
+                    💡 Tip: Click objects in the browser below to see their UID. The browser may take a moment to load.
+                </div>
+                
                 <div id="browserContainer">
-                    <iframe src="https://sapien.ucsd.edu/browse" title="SAPIEN Object Browser"></iframe>
+                    <div class="browser-controls">
+                        <button onclick="refreshBrowser()">🔄 Refresh Browser</button>
+                        <button onclick="openInNewTab()">🔗 Open in New Tab</button>
+                        <span style="color: #666; font-size: 12px;">Browser loads better in full screen</span>
+                    </div>
+                    <iframe src="https://sapien.ucsd.edu/browse" title="SAPIEN Object Browser" id="browserFrame"></iframe>
                 </div>
                 
                 <div id="jointsList" style="display:none;"></div>
@@ -355,18 +462,27 @@
                 
                 <button onclick="generateVideo()" id="generateBtn" style="width: 100%;">🎬 Generate Test Video</button>
                 
+                <!-- Loading indicator -->
+                <div id="loadingContainer" class="loading-container">
+                    <div class="loading-spinner"></div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">Initializing video generation...</div>
+                </div>
+                
                 <div id="videoContainer" style="display:none;">
                     <h3 style="margin-bottom: 15px; text-align: center;">Generated Test Videos</h3>
                     <div class="video-grid">
                         <div class="video-item">
                             <h4>Depth Video</h4>
                             <video id="depthVideo" controls autoplay loop style="display:none; width: 100%; max-width: 300px;"></video>
-                            <p id="depthStatus" style="color: #666; font-size: 12px; margin-top: 5px;">No depth video</p>
+                            <div id="depthStatus" class="video-status">No depth video generated</div>
                         </div>
                         <div class="video-item">
                             <h4>Color Video</h4>
                             <video id="colorVideo" controls autoplay loop style="display:none; width: 100%; max-width: 300px;"></video>
-                            <p id="colorStatus" style="color: #666; font-size: 12px; margin-top: 5px;">No color video</p>
+                            <div id="colorStatus" class="video-status">No color video generated</div>
                         </div>
                     </div>
                 </div>
@@ -453,6 +569,15 @@
         window.onload = function() {
             loadAnnotations();
         };
+        
+        function refreshBrowser() {
+            const iframe = document.getElementById('browserFrame');
+            iframe.src = iframe.src;
+        }
+        
+        function openInNewTab() {
+            window.open('https://sapien.ucsd.edu/browse', '_blank');
+        }
         
         async function loadObjectInfo() {
             const objectId = document.getElementById('objectId').value;
@@ -542,11 +667,46 @@
                 return;
             }
             
+            // Show loading indicator with proper progress tracking
             const generateBtn = document.getElementById('generateBtn');
-            generateBtn.disabled = true;
-            generateBtn.innerHTML = '🔄 Generating...';
+            const loadingContainer = document.getElementById('loadingContainer');
+            const videoContainer = document.getElementById('videoContainer');
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
             
-            showStatus('Generating videos... This may take a moment', 'info');
+            generateBtn.disabled = true;
+            generateBtn.innerHTML = '⏳ Generating...';
+            loadingContainer.classList.add('show');
+            videoContainer.style.display = 'none';
+            
+            // Reset progress
+            progressFill.style.width = '0%';
+            progressFill.classList.add('animated');
+            progressText.textContent = 'Starting video generation...';
+            
+            // Reset video status
+            document.getElementById('depthStatus').className = 'video-status loading';
+            document.getElementById('depthStatus').textContent = 'Preparing...';
+            document.getElementById('colorStatus').className = 'video-status loading';
+            document.getElementById('colorStatus').textContent = 'Preparing...';
+            
+            showStatus('Generating videos... This may take up to 30 seconds', 'info');
+            
+            // Simulate progress updates
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += Math.random() * 15;
+                if (progress > 90) progress = 90; // Don't go to 100% until actually done
+                progressFill.style.width = progress + '%';
+                
+                if (progress < 30) {
+                    progressText.textContent = 'Loading object and setting up camera...';
+                } else if (progress < 60) {
+                    progressText.textContent = 'Generating animation frames...';
+                } else if (progress < 90) {
+                    progressText.textContent = 'Creating video files...';
+                }
+            }, 800);
             
             try {
                 const response = await fetch('/generate_video', {
@@ -561,57 +721,112 @@
                     })
                 });
                 
+                // Clear progress interval
+                clearInterval(progressInterval);
+                
                 const data = await response.json();
                 
                 if (data.error) {
-                    showStatus(data.error, 'error');
+                    // Hide loading and show error
+                    progressFill.classList.remove('animated');
+                    progressFill.style.width = '100%';
+                    progressFill.style.background = '#dc3545';
+                    progressText.textContent = 'Generation failed!';
+                    
+                    setTimeout(() => {
+                        loadingContainer.classList.remove('show');
+                    }, 2000);
+                    
+                    showStatus('Video generation failed: ' + data.error, 'error');
                     return;
                 }
                 
-                // Display videos
-                const videoContainer = document.getElementById('videoContainer');
-                videoContainer.style.display = 'block';
+                // Complete progress
+                progressFill.classList.remove('animated');
+                progressFill.style.width = '100%';
+                progressText.textContent = 'Videos generated successfully! Loading...';
                 
-                const depthVideo = document.getElementById('depthVideo');
-                const colorVideo = document.getElementById('colorVideo');
-                const depthStatus = document.getElementById('depthStatus');
-                const colorStatus = document.getElementById('colorStatus');
-                
-                console.log('Video response data:', data);
-                
-                if (data.depth_video_path) {
-                    console.log('Setting depth video src:', data.depth_video_path);
-                    depthVideo.src = data.depth_video_path;
-                    depthVideo.style.display = 'block';
-                    depthVideo.load(); // Force reload
-                    depthStatus.textContent = 'Depth video loaded';
-                    depthStatus.style.color = '#28a745';
-                } else {
-                    depthVideo.style.display = 'none';
-                    depthStatus.textContent = 'No depth video generated';
-                    depthStatus.style.color = '#dc3545';
-                }
-                
-                if (data.color_video_path) {
-                    console.log('Setting color video src:', data.color_video_path);
-                    colorVideo.src = data.color_video_path;
-                    colorVideo.style.display = 'block';
-                    colorVideo.load(); // Force reload
-                    colorStatus.textContent = 'Color video loaded';
-                    colorStatus.style.color = '#28a745';
-                } else {
-                    colorVideo.style.display = 'none';
-                    colorStatus.textContent = 'No color video generated';
-                    colorStatus.style.color = '#dc3545';
-                }
-                
-                hasGeneratedVideo = true;
-                document.getElementById('annotationWarning').style.display = 'none';
-                showStatus('Videos generated successfully!', 'success');
+                // Wait a moment then hide loading and show videos
+                setTimeout(() => {
+                    loadingContainer.classList.remove('show');
+                    videoContainer.style.display = 'block';
+                    
+                    const depthVideo = document.getElementById('depthVideo');
+                    const colorVideo = document.getElementById('colorVideo');
+                    const depthStatus = document.getElementById('depthStatus');
+                    const colorStatus = document.getElementById('colorStatus');
+                    
+                    console.log('Video response data:', data);
+                    
+                    // Handle depth video
+                    if (data.depth_video_path) {
+                        console.log('Setting depth video src:', data.depth_video_path);
+                        const depthSrc = data.depth_video_path + '?t=' + Date.now();
+                        depthVideo.src = depthSrc;
+                        depthVideo.style.display = 'block';
+                        depthVideo.load();
+                        depthStatus.className = 'video-status success';
+                        depthStatus.textContent = 'Depth video loaded successfully';
+                        
+                        // Handle video load events
+                        depthVideo.onloadeddata = function() {
+                            console.log('Depth video loaded successfully');
+                        };
+                        
+                        depthVideo.onerror = function(e) {
+                            console.error('Depth video error:', e);
+                            depthStatus.className = 'video-status error';
+                            depthStatus.textContent = 'Error loading depth video';
+                        };
+                    } else {
+                        depthVideo.style.display = 'none';
+                        depthStatus.className = 'video-status error';
+                        depthStatus.textContent = 'No depth video generated';
+                    }
+                    
+                    // Handle color video
+                    if (data.color_video_path) {
+                        console.log('Setting color video src:', data.color_video_path);
+                        const colorSrc = data.color_video_path + '?t=' + Date.now();
+                        colorVideo.src = colorSrc;
+                        colorVideo.style.display = 'block';
+                        colorVideo.load();
+                        colorStatus.className = 'video-status success';
+                        colorStatus.textContent = 'Color video loaded successfully';
+                        
+                        // Handle video load events
+                        colorVideo.onloadeddata = function() {
+                            console.log('Color video loaded successfully');
+                        };
+                        
+                        colorVideo.onerror = function(e) {
+                            console.error('Color video error:', e);
+                            colorStatus.className = 'video-status error';
+                            colorStatus.textContent = 'Error loading color video';
+                        };
+                    } else {
+                        colorVideo.style.display = 'none';
+                        colorStatus.className = 'video-status error';
+                        colorStatus.textContent = 'No color video generated';
+                    }
+                    
+                    hasGeneratedVideo = true;
+                    document.getElementById('annotationWarning').style.display = 'none';
+                    showStatus('Videos generated successfully!', 'success');
+                }, 1000);
                 
             } catch (error) {
+                clearInterval(progressInterval);
+                loadingContainer.classList.remove('show');
                 showStatus('Error generating video: ' + error, 'error');
+                
+                // Update status indicators
+                document.getElementById('depthStatus').className = 'video-status error';
+                document.getElementById('depthStatus').textContent = 'Generation failed';
+                document.getElementById('colorStatus').className = 'video-status error';
+                document.getElementById('colorStatus').textContent = 'Generation failed';
             } finally {
+                clearInterval(progressInterval);
                 generateBtn.disabled = false;
                 generateBtn.innerHTML = '🎬 Generate Test Video';
             }
@@ -628,9 +843,18 @@
                     showStatus(data.error, 'error');
                 } else {
                     showStatus(data.message, 'success');
-                    // Hide video container
+                    // Hide video container and reset
                     document.getElementById('videoContainer').style.display = 'none';
+                    document.getElementById('loadingContainer').classList.remove('show');
                     hasGeneratedVideo = false;
+                    
+                    // Reset video elements
+                    document.getElementById('depthVideo').src = '';
+                    document.getElementById('colorVideo').src = '';
+                    document.getElementById('depthStatus').className = 'video-status';
+                    document.getElementById('depthStatus').textContent = 'No depth video generated';
+                    document.getElementById('colorStatus').className = 'video-status';
+                    document.getElementById('colorStatus').textContent = 'No color video generated';
                 }
             } catch (error) {
                 showStatus('Error clearing videos: ' + error, 'error');
