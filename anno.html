@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Articulated Object Annotation Tool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .panel {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .panel h2 {
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+        
+        input[type="text"],
+        input[type="number"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        textarea {
+            resize: vertical;
+            min-height: 60px;
+        }
+        
+        .range-input {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        
+        button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .button-group button {
+            flex: 1;
+            min-width: 140px;
+        }
+        
+        #status {
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 15px;
+            font-weight: 500;
+            display: none;
+        }
+        
+        #status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        
+        #status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+        
+        #status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+        
+        #jointsList {
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        
+        .joint-item {
+            padding: 8px;
+            margin-bottom: 5px;
+            background: white;
+            border-radius: 4px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .joint-item.movable {
+            border-left-color: #28a745;
+        }
+        
+        #videoContainer {
+            margin-top: 20px;
+            text-align: center;
+        }
+        
+        #videoContainer video {
+            max-width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        
+        #annotationsTable {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        #annotationsTable th,
+        #annotationsTable td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        #annotationsTable th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        #annotationsTable tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .delete-btn {
+            padding: 5px 10px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .delete-btn:hover {
+            background: #c82333;
+        }
+        
+        .export-btn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            margin-top: 15px;
+        }
+        
+        .info-text {
+            color: #666;
+            font-size: 13px;
+            margin-top: 5px;
+            font-style: italic;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Articulated Object Annotation Tool</h1>
+        
+        <div class="main-grid">
+            <!-- Left Panel - Input Form -->
+            <div class="panel">
+                <h2>📝 Annotation Input</h2>
+                
+                <div class="form-group">
+                    <label for="objectId">Object UID:</label>
+                    <input type="number" id="objectId" placeholder="e.g., 179">
+                    <span class="info-text">From sapien.ucsd.edu/browse</span>
+                </div>
+                
+                <div class="button-group">
+                    <button onclick="loadObjectInfo()">🔍 Load Object Info</button>
+                    <button onclick="openSapienBrowser()">🌐 Browse Objects</button>
+                </div>
+                
+                <div id="jointsList" style="display:none;"></div>
+                
+                <div class="form-group">
+                    <label for="jointIndex">Joint Index to Test:</label>
+                    <select id="jointIndex">
+                        <option value="">Select after loading object</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Camera Parameters:</label>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                        <div>
+                            <label for="azimuth" style="font-size: 12px;">Azimuth (°):</label>
+                            <input type="number" id="azimuth" value="180" step="10">
+                        </div>
+                        <div>
+                            <label for="elevation" style="font-size: 12px;">Elevation (°):</label>
+                            <input type="number" id="elevation" value="20" step="5">
+                        </div>
+                        <div>
+                            <label for="distanceFactor" style="font-size: 12px;">Distance Factor:</label>
+                            <input type="number" id="distanceFactor" value="3" step="0.5">
+                        </div>
+                    </div>
+                </div>
+                
+                <button onclick="generateVideo()" style="width: 100%;">🎬 Generate Test Video</button>
+                
+                <div id="videoContainer" style="display:none;"></div>
+                
+                <div class="form-group" style="margin-top: 20px;">
+                    <label for="jointIndices">Joint Indices (comma-separated):</label>
+                    <input type="text" id="jointIndices" placeholder="e.g., 0,1">
+                </div>
+                
+                <div class="form-group">
+                    <label for="jointPrompts">Joint Prompts (comma-separated):</label>
+                    <input type="text" id="jointPrompts" placeholder='e.g., "upper drawer","lower drawer"'>
+                    <span class="info-text">Describe each joint's movement</span>
+                </div>
+                
+                <div class="form-group">
+                    <label>Elevation Range:</label>
+                    <div class="range-input">
+                        <input type="number" id="elevationMin" placeholder="Min (e.g., -20)" value="-20">
+                        <input type="number" id="elevationMax" placeholder="Max (e.g., 50)" value="50">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Azimuth Range:</label>
+                    <div class="range-input">
+                        <input type="number" id="azimuthMin" placeholder="Min (e.g., 100)" value="100">
+                        <input type="number" id="azimuthMax" placeholder="Max (e.g., 200)" value="200">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="basePrompt">Base Prompt:</label>
+                    <textarea id="basePrompt" placeholder="e.g., A nightstand's drawer is sliding out."></textarea>
+                </div>
+                
+                <button onclick="saveAnnotation()" style="width: 100%; margin-top: 10px;">💾 Save Annotation</button>
+                
+                <div id="status"></div>
+            </div>
+            
+            <!-- Right Panel - Saved Annotations -->
+            <div class="panel">
+                <h2>📊 Saved Annotations</h2>
+                
+                <div id="annotationsContainer">
+                    <table id="annotationsTable">
+                        <thead>
+                            <tr>
+                                <th>UID</th>
+                                <th>Joints</th>
+                                <th>Base Prompt</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="annotationsBody">
+                        </tbody>
+                    </table>
+                </div>
+                
+                <button class="export-btn" onclick="exportAnnotations()" style="width: 100%;">📥 Export as JSON</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let annotations = [];
+        let currentObjectInfo = null;
+        
+        // Load saved annotations on page load
+        window.onload = function() {
+            loadAnnotations();
+        };
+        
+        function openSapienBrowser() {
+            window.open('https://sapien.ucsd.edu/browse', '_blank');
+        }
+        
+        async function loadObjectInfo() {
+            const objectId = document.getElementById('objectId').value;
+            if (!objectId) {
+                showStatus('Please enter an Object UID', 'error');
+                return;
+            }
+            
+            showStatus('Loading object information...', 'info');
+            
+            try {
+                const response = await fetch('/load_object', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({object_id: parseInt(objectId)})
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    showStatus(data.error, 'error');
+                    return;
+                }
+                
+                currentObjectInfo = data;
+                displayJointInfo(data.joints);
+                populateJointSelect(data.movable_joints);
+                showStatus('Object loaded successfully!', 'success');
+                
+            } catch (error) {
+                showStatus('Error loading object: ' + error, 'error');
+            }
+        }
+        
+        function displayJointInfo(joints) {
+            const jointsList = document.getElementById('jointsList');
+            jointsList.style.display = 'block';
+            jointsList.innerHTML = '<strong>All Joints:</strong><br>';
+            
+            joints.forEach(joint => {
+                const jointClass = joint.type === 'fixed' ? 'joint-item' : 'joint-item movable';
+                jointsList.innerHTML += `
+                    <div class="${jointClass}">
+                        <strong>Joint ${joint.index}:</strong> ${joint.name || 'unnamed'}<br>
+                        Type: ${joint.type}
+                        ${joint.limits ? `<br>Limits: [${joint.limits[0].toFixed(3)}, ${joint.limits[1].toFixed(3)}]` : ''}
+                    </div>
+                `;
+            });
+        }
+        
+        function populateJointSelect(movableJoints) {
+            const select = document.getElementById('jointIndex');
+            select.innerHTML = '<option value="">Select a joint</option>';
+            
+            movableJoints.forEach((joint, idx) => {
+                const option = document.createElement('option');
+                option.value = idx;
+                option.text = `${idx}: ${joint.name || 'unnamed'} (${joint.type})`;
+                select.appendChild(option);
+            });
+        }
+        
+        async function generateVideo() {
+            const objectId = document.getElementById('objectId').value;
+            const jointIndex = document.getElementById('jointIndex').value;
+            const azimuth = document.getElementById('azimuth').value;
+            const elevation = document.getElementById('elevation').value;
+            const distanceFactor = document.getElementById('distanceFactor').value;
+            
+            if (!objectId || jointIndex === '') {
+                showStatus('Please load object and select a joint', 'error');
+                return;
+            }
+            
+            showStatus('Generating video... This may take a moment', 'info');
+            
+            try {
+                const response = await fetch('/generate_video', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        object_id: parseInt(objectId),
+                        joint_index: parseInt(jointIndex),
+                        azimuth: parseFloat(azimuth),
+                        elevation: parseFloat(elevation),
+                        distance_factor: parseFloat(distanceFactor)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    showStatus(data.error, 'error');
+                    return;
+                }
+                
+                // Display video
+                const videoContainer = document.getElementById('videoContainer');
+                videoContainer.style.display = 'block';
+                videoContainer.innerHTML = `
+                    <video controls autoplay loop>
+                        <source src="${data.video_path}" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    <p style="margin-top: 10px; color: #666;">Video: ${data.video_path}</p>
+                `;
+                
+                showStatus('Video generated successfully!', 'success');
+                
+            } catch (error) {
+                showStatus('Error generating video: ' + error, 'error');
+            }
+        }
+        
+        function saveAnnotation() {
+            const annotation = {
+                uid: parseInt(document.getElementById('objectId').value),
+                joint_indices: document.getElementById('jointIndices').value.split(',').map(x => parseInt(x.trim())),
+                joint_prompts: document.getElementById('jointPrompts').value.split(',').map(x => x.trim()),
+                elevation_range: [
+                    parseInt(document.getElementById('elevationMin').value),
+                    parseInt(document.getElementById('elevationMax').value)
+                ],
+                azimuth_range: [
+                    parseInt(document.getElementById('azimuthMin').value),
+                    parseInt(document.getElementById('azimuthMax').value)
+                ],
+                distance_factor: parseFloat(document.getElementById('distanceFactor').value),
+                base_prompt: document.getElementById('basePrompt').value
+            };
+            
+            // Validation
+            if (!annotation.uid || annotation.joint_indices.length === 0 || 
+                annotation.joint_prompts.length === 0 || !annotation.base_prompt) {
+                showStatus('Please fill all required fields', 'error');
+                return;
+            }
+            
+            if (annotation.joint_indices.length !== annotation.joint_prompts.length) {
+                showStatus('Number of joint indices must match number of joint prompts', 'error');
+                return;
+            }
+            
+            annotations.push(annotation);
+            saveToLocalStorage();
+            updateAnnotationsTable();
+            clearForm();
+            showStatus('Annotation saved successfully!', 'success');
+        }
+        
+        function clearForm() {
+            document.getElementById('jointIndices').value = '';
+            document.getElementById('jointPrompts').value = '';
+            document.getElementById('basePrompt').value = '';
+            document.getElementById('elevationMin').value = '-20';
+            document.getElementById('elevationMax').value = '50';
+            document.getElementById('azimuthMin').value = '100';
+            document.getElementById('azimuthMax').value = '200';
+        }
+        
+        function saveToLocalStorage() {
+            localStorage.setItem('articulated_annotations', JSON.stringify(annotations));
+        }
+        
+        function loadAnnotations() {
+            const saved = localStorage.getItem('articulated_annotations');
+            if (saved) {
+                annotations = JSON.parse(saved);
+                updateAnnotationsTable();
+            }
+        }
+        
+        function updateAnnotationsTable() {
+            const tbody = document.getElementById('annotationsBody');
+            tbody.innerHTML = '';
+            
+            annotations.forEach((ann, idx) => {
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td>${ann.uid}</td>
+                    <td>${ann.joint_indices.join(', ')}</td>
+                    <td>${ann.base_prompt.substring(0, 30)}...</td>
+                    <td>
+                        <button class="delete-btn" onclick="deleteAnnotation(${idx})">Delete</button>
+                    </td>
+                `;
+            });
+        }
+        
+        function deleteAnnotation(index) {
+            if (confirm('Are you sure you want to delete this annotation?')) {
+                annotations.splice(index, 1);
+                saveToLocalStorage();
+                updateAnnotationsTable();
+                showStatus('Annotation deleted', 'info');
+            }
+        }
+        
+        function exportAnnotations() {
+            if (annotations.length === 0) {
+                showStatus('No annotations to export', 'error');
+                return;
+            }
+            
+            const dataStr = JSON.stringify(annotations, null, 2);
+            const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+            
+            const exportFileDefaultName = `annotations_${new Date().toISOString().split('T')[0]}.json`;
+            
+            const linkElement = document.createElement('a');
+            linkElement.setAttribute('href', dataUri);
+            linkElement.setAttribute('download', exportFileDefaultName);
+            linkElement.click();
+            
+            showStatus('Annotations exported!', 'success');
+        }
+        
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = type;
+            
+            if (type !== 'error') {
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 5000);
+            }
+        }
+    </script>
+</body>
+</html>
