@@ -580,7 +580,7 @@
         let hasGeneratedVideo = false;
         
         window.onload = function() {
-            loadAnnotations();
+            loadAnnotationsFromServer();
         };
         
         function refreshBrowser() {
@@ -895,11 +895,37 @@
                 return;
             }
             
-            annotations.push(annotation);
+            // 检查重复UID
+            const existingIndex = annotations.findIndex(ann => ann.uid === annotation.uid);
+            
+            if (existingIndex !== -1) {
+                // 找到重复的UID，询问是否覆盖
+                const existingAnn = annotations[existingIndex];
+                const confirmMessage = `UID ${annotation.uid} already exists with:\n\n` +
+                    `Current: Joint indices [${existingAnn.joint_indices.join(', ')}]\n` +
+                    `New: Joint indices [${annotation.joint_indices.join(', ')}]\n\n` +
+                    `Do you want to OVERWRITE the existing annotation?`;
+                
+                if (confirm(confirmMessage)) {
+                    // 覆盖现有注释
+                    annotations[existingIndex] = annotation;
+                    showStatus(`Annotation for UID ${annotation.uid} updated successfully!`, 'success');
+                } else {
+                    // 用户取消，不保存
+                    showStatus('Save cancelled - existing annotation kept', 'info');
+                    return;
+                }
+            } else {
+                // 新的UID，直接添加
+                annotations.push(annotation);
+                showStatus('New annotation saved successfully!', 'success');
+            }
+            
+            // 保存和更新界面
             saveToLocalStorage();
+            saveAnnotationsToServer();
             updateAnnotationsTable();
             clearForm();
-            showStatus('Annotation saved successfully!', 'success');
         }
         
         function clearForm() {
@@ -923,15 +949,72 @@
                 updateAnnotationsTable();
             }
         }
+
+        async function loadAnnotationsFromServer() {
+            try {
+                const response = await fetch('/load_annotations');
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.error('Error loading annotations:', data.error);
+                    loadAnnotations(); // 如果服务器加载失败，尝试从localStorage加载
+                } else {
+                    annotations = data.annotations || [];
+                    updateAnnotationsTable();
+                    if (annotations.length > 0) {
+                        showStatus(`Loaded ${annotations.length} annotations from server`, 'success');
+                    }
+                }
+            } catch (error) {
+                console.error('Error connecting to server:', error);
+                loadAnnotations(); // 网络错误时使用localStorage
+            }
+        }	
+
+        async function saveAnnotationsToServer() {
+            try {
+                const response = await fetch('/save_annotations', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({annotations: annotations})
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    showStatus('Error saving to server: ' + data.error, 'error');
+                } else {
+                    showStatus('Saved to server successfully!', 'success');
+                }
+            } catch (error) {
+                showStatus('Network error saving to server', 'error');
+                console.error('Save error:', error);
+            }
+        }
         
+
         function updateAnnotationsTable() {
             const tbody = document.getElementById('annotationsBody');
             tbody.innerHTML = '';
             
+            // 找到重复的UID
+            const uidCounts = {};
+            annotations.forEach(ann => {
+                uidCounts[ann.uid] = (uidCounts[ann.uid] || 0) + 1;
+            });
+            
             annotations.forEach((ann, idx) => {
                 const row = tbody.insertRow();
+                
+                // 如果UID重复，添加警告样式
+                const isDuplicate = uidCounts[ann.uid] > 1;
+                if (isDuplicate) {
+                    row.style.backgroundColor = '#fff3cd'; // 淡黄色背景
+                    row.style.borderLeft = '4px solid #ffc107'; // 左边框警告色
+                }
+                
                 row.innerHTML = `
-                    <td>${ann.uid}</td>
+                    <td>${ann.uid}${isDuplicate ? ' ⚠️' : ''}</td>
                     <td>[${ann.joint_indices.join(', ')}]</td>
                     <td>["${ann.joint_prompts.join('", "')}"]</td>
                     <td>[${ann.elevation_range.join(', ')}]</td>
@@ -944,7 +1027,7 @@
                 `;
             });
             
-            // Re-check if current object has existing annotation
+            // 更新现有注释检查
             if (currentObjectInfo) {
                 checkExistingAnnotation(currentObjectInfo.object_id);
             }
@@ -974,7 +1057,8 @@
         function deleteAnnotation(index) {
             if (confirm('Are you sure you want to delete this annotation?')) {
                 annotations.splice(index, 1);
-                saveToLocalStorage();
+                saveToLocalStorage(); // 保持本地备份
+                saveAnnotationsToServer(); // 同步到服务器
                 updateAnnotationsTable();
                 showStatus('Annotation deleted', 'info');
             }

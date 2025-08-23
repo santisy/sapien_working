@@ -289,6 +289,36 @@ def save_to_feishu():
         'file': csv_file
     })
 
+# 配置部分添加
+ANNOTATIONS_FILE = os.path.join(RESULTS_DIR, 'annotations_db.json')
+
+@app.route('/load_annotations', methods=['GET'])
+def load_annotations_from_server():
+    """从服务器加载所有注释"""
+    try:
+        if os.path.exists(ANNOTATIONS_FILE):
+            with open(ANNOTATIONS_FILE, 'r', encoding='utf-8') as f:
+                annotations = json.load(f)
+            return jsonify({'annotations': annotations})
+        else:
+            return jsonify({'annotations': []})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/save_annotations', methods=['POST'])
+def save_annotations_to_server():
+    """保存所有注释到服务器"""
+    try:
+        data = request.json
+        annotations = data.get('annotations', [])
+        
+        with open(ANNOTATIONS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(annotations, f, indent=2, ensure_ascii=False)
+        
+        return jsonify({'message': f'Saved {len(annotations)} annotations to server'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     print("=" * 60)
     print("Articulated Object Annotation Server")
