@@ -163,7 +163,7 @@ def generate_video():
         
         # Find the generated video files - match the actual format from camera.py
         # camera.py uses float formatting which adds .0 to integers
-        base_filename = f'obj{object_id}_joint{joint_index}_az{float(azimuth)}_el{float(elevation)}_df{float(distance_factor)}'
+        base_filename = f'obj{object_id}_joint{joint_index}_az{float(azimuth):.2f}_el{float(elevation):.2f}_df{float(distance_factor):.1f}'
         depth_filename = f'depth_{base_filename}.mp4'
         color_filename = f'color_{base_filename}.mp4'
         

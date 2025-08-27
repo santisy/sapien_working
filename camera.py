@@ -109,6 +109,53 @@ def position_camera_for_object(scene, camera, camera_mount_actor, normalization_
     
     camera_mount_actor.set_pose(sapien.Pose.from_transformation_matrix(mat44))
 
+def apply_aspect_ratio_augmentation(image, target_size, aspect_ratio_std=0.2, seed=None):
+    """
+    Apply aspect ratio augmentation: stretch the image and then center crop to target size.
+    
+    Args:
+        image: PIL Image
+        target_size: tuple (width, height) for final output size
+        aspect_ratio_std: standard deviation for the normal distribution of aspect ratios
+        seed: random seed for reproducibility (optional)
+    
+    Returns:
+        PIL Image with augmentation applied
+    """
+    if seed is not None:
+        np.random.seed(seed)
+    
+    # Sample aspect ratio multiplier from normal distribution (mean=1.0)
+    aspect_ratio_multiplier = np.random.normal(1.0, aspect_ratio_std)
+    
+    # Clamp to reasonable bounds to avoid extreme distortions
+    aspect_ratio_multiplier = np.clip(aspect_ratio_multiplier, 0.5, 2.0)
+    
+    target_width, target_height = target_size
+    
+    # Calculate intermediate size for stretching
+    if aspect_ratio_multiplier > 1.0:
+        # Make wider (stretch horizontally)
+        intermediate_width = int(target_width * aspect_ratio_multiplier)
+        intermediate_height = target_height
+    else:
+        # Make taller (stretch vertically)
+        intermediate_width = target_width
+        intermediate_height = int(target_height / aspect_ratio_multiplier)
+    
+    # Resize image to intermediate size
+    stretched_image = image.resize((intermediate_width, intermediate_height), Image.LANCZOS)
+    
+    # Center crop back to target size
+    left = (intermediate_width - target_width) // 2
+    top = (intermediate_height - target_height) // 2
+    right = left + target_width
+    bottom = top + target_height
+    
+    cropped_image = stretched_image.crop((left, top, right, bottom))
+    
+    return cropped_image
+
 def main(args):
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -257,6 +304,16 @@ def main(args):
     print(f"Saving depth frames to: {temp_depth_dir}")
     print(f"Saving color frames to: {temp_color_dir}")
     
+    # Generate video-wise augmentation parameters if enabled
+    aspect_ratio_multiplier = 1.0
+    if args.aspect_augmentation:
+        # Use az, el, and object_id to generate consistent seed for the entire video
+        video_seed = int((args.azimuth * 1000 + args.elevation * 100 + args.object_id) % 2**31) + args.aspect_seed
+        np.random.seed(video_seed)
+        aspect_ratio_multiplier = np.random.normal(1.0, args.aspect_ratio_std)
+        aspect_ratio_multiplier = np.clip(aspect_ratio_multiplier, 0.75, 1.25)
+        print(f"Aspect ratio augmentation enabled: multiplier={aspect_ratio_multiplier:.3f} (seed={video_seed})")
+    
     for frame in range(args.num_frames):
         # Interpolate joint position
         t = frame / (args.num_frames - 1)
@@ -284,6 +341,17 @@ def main(args):
         depth = -position[..., 2]
         depth_normalized = ((depth - depth_min) / (depth_max - depth_min) * 255).clip(0, 255).astype(np.uint8)
         depth_vis_pil = Image.fromarray(depth_normalized)
+        
+        # Apply aspect ratio augmentation if enabled
+        if args.aspect_augmentation:
+            # Use frame number as seed for reproducibility
+            depth_vis_pil = apply_aspect_ratio_augmentation(
+                depth_vis_pil, 
+                (width, height), 
+                args.aspect_ratio_std, 
+                seed=video_seed  # Make seed unique per object and frame
+            )
+        
         depth_frame_name = f'depth_frame_{frame:04d}.png'
         depth_vis_pil.save(os.path.join(temp_depth_dir, depth_frame_name))
         
@@ -292,11 +360,29 @@ def main(args):
             rgba = camera.get_float_texture("Color")  # [H, W, 4]
             rgba_img = (rgba * 255).clip(0, 255).astype("uint8")
             rgba_pil = Image.fromarray(rgba_img)
+            
+            # Apply aspect ratio augmentation if enabled
+            if args.aspect_augmentation:
+                rgba_pil = apply_aspect_ratio_augmentation(
+                    rgba_pil, 
+                    (width, height), 
+                    args.aspect_ratio_std, 
+                    seed=video_seed  # Same seed as depth for consistency
+                )
+            
             color_frame_name = f'color_frame_{frame:04d}.png'
             rgba_pil.save(os.path.join(temp_color_dir, color_frame_name))
     
     # Generate videos using ffmpeg
-    base_filename = f'obj{args.object_id}_joint{args.joint_index}_az{args.azimuth}_el{args.elevation}_df{args.distance_factor}'
+    # Format azimuth and elevation to 3 decimal places for filename
+    az_formatted = f"{args.azimuth:.2f}"
+    el_formatted = f"{args.elevation:.2f}"
+    df_formatted = f"{args.distance_factor:.1f}"
+    
+    # Add augmentation indicator to filename
+    aug_suffix = f"_aug{args.aspect_seed}" if args.aspect_augmentation else ""
+    
+    base_filename = f'obj{args.object_id}_joint{args.joint_index}_az{az_formatted}_el{el_formatted}_df{df_formatted}{aug_suffix}'
     
     # Generate depth video
     depth_video = os.path.join(args.output_dir, f'depth_{base_filename}.mp4')
@@ -359,5 +445,11 @@ if __name__ == '__main__':
                         help="Camera distance multiplier relative to object diagonal")
     parser.add_argument("--generate_both", action='store_true',
                         help="Generate both depth and color videos")
+    parser.add_argument("--aspect_augmentation", action='store_true',
+                        help="Enable aspect ratio augmentation")
+    parser.add_argument("--aspect_ratio_std", type=float, default=0.2,
+                        help="Standard deviation for aspect ratio augmentation (default: 0.2)")
+    parser.add_argument("--aspect_seed", type=int, default=0,
+                        help="Additional aspect augmentation seed.")
     args = parser.parse_args()
     main(args)
