@@ -4,10 +4,10 @@ import random
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def augment_video_description(concrete_joint, base_prompt):
+def augment_video_description(total_joint_prompt, concrete_joint, base_prompt):
     system_prompt = "You must output only a single paragraph video description. No lists, no labels, no titles. Just one flowing sentence describing the furniture action with material, lighting, location, and contents revealed inside. Lighting can vary, but it must never be described as dark or completely shadowed."
     
-    user_prompt = f"Joint: {concrete_joint}\nAction: {base_prompt}\nWrite one paragraph describing this furniture opening, include random material type, lighting, room location, what's inside, end with 'No occlusion. Realistic video style.' Output format: single paragraph only."
+    user_prompt = f"Total joint prompt: {total_joint_prompt}, Joint: {concrete_joint}\nAction: {base_prompt}\nWrite one paragraph describing this furniture opening according to the `Joint` and `Action`, include random material type, lighting, room location, what's inside, end with 'No occlusion. Realistic video style.' Output format: single paragraph only. It should briefly indicate the overall furniture structure according to the `Total joint prompt` somehow."
     
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
